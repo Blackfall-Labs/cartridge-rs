@@ -14,8 +14,8 @@
 //! use cartridge_rs::{Cartridge, Result};
 //!
 //! # fn main() -> Result<()> {
-//! // Create a new archive with sensible defaults
-//! let mut cart = Cartridge::create("data.cart")?;
+//! // Create a new archive - auto-grows from 12KB as needed!
+//! let mut cart = Cartridge::create("my-data", "My Data Container")?;
 //!
 //! // Write files
 //! cart.write("documents/report.txt", b"Hello, World!")?;
@@ -39,8 +39,9 @@
 //! # fn main() -> Result<()> {
 //! // Use builder for custom configuration
 //! let mut cart = CartridgeBuilder::new()
-//!     .path("data.cart")
-//!     .blocks(50_000)  // ~200MB
+//!     .slug("my-data")
+//!     .title("My Data Container")
+//!     .path("/data/my-container")  // Custom path
 //!     .with_audit_logging()
 //!     .build()?;
 //!
@@ -55,7 +56,9 @@ pub use cartridge_core::{
     catalog::{FileMetadata, FileType},
     iam::{Action, Policy, PolicyEngine, Statement, Effect},
     snapshot::{SnapshotManager, SnapshotMetadata},
-    header::PAGE_SIZE,
+    header::{PAGE_SIZE, S3FeatureFuses, S3AclMode, S3SseMode, S3VersioningMode},
+    manifest::Manifest,
+    validation::ContainerSlug,
 };
 
 use cartridge_core::Cartridge as CoreCartridge;
@@ -76,7 +79,7 @@ use tracing::{debug, info};
 /// use cartridge_rs::{Cartridge, Result};
 ///
 /// # fn main() -> Result<()> {
-/// let mut cart = Cartridge::create("data.cart")?;
+/// let mut cart = Cartridge::create("my-data", "My Data")?;
 /// cart.write("file.txt", b"content")?;
 /// let data = cart.read("file.txt")?;
 /// # Ok(())
@@ -87,25 +90,44 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    /// Create a new Cartridge archive with default settings
+    /// Create a new Cartridge archive with auto-growth
     ///
-    /// Default configuration:
-    /// - 10,000 blocks (~40MB initial size)
-    /// - No encryption
-    /// - No compression
-    /// - No audit logging
+    /// Creates a container with the given slug and title.
+    /// - Starts at 12KB and grows automatically as needed
+    /// - Slug is used as the filename (kebab-case, becomes `{slug}.cart`)
+    /// - Title is the human-readable display name
     ///
     /// # Examples
     ///
     /// ```rust,no_run
     /// use cartridge_rs::Cartridge;
     ///
-    /// let mut cart = Cartridge::create("data.cart")?;
+    /// // Creates "my-data.cart" in current directory
+    /// let mut cart = Cartridge::create("my-data", "My Data Container")?;
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
     /// ```
-    pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        info!("Creating cartridge at {:?}", path.as_ref());
-        let inner = CoreCartridge::create(path, 10_000)?;
+    pub fn create(slug: &str, title: &str) -> Result<Self> {
+        info!("Creating cartridge with slug '{}', title '{}'", slug, title);
+        let inner = CoreCartridge::create(slug, title)?;
+        Ok(Cartridge { inner })
+    }
+
+    /// Create a new Cartridge archive at a specific path
+    ///
+    /// Use this when you need to specify a custom directory or path.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use cartridge_rs::Cartridge;
+    ///
+    /// // Creates "/data/my-container.cart"
+    /// let mut cart = Cartridge::create_at("/data/my-container", "my-container", "My Container")?;
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn create_at<P: AsRef<Path>>(path: P, slug: &str, title: &str) -> Result<Self> {
+        info!("Creating cartridge at {:?} with slug '{}', title '{}'", path.as_ref(), slug, title);
+        let inner = CoreCartridge::create_at(path, slug, title)?;
         Ok(Cartridge { inner })
     }
 
@@ -134,7 +156,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let mut cart = Cartridge::create("data.cart")?;
+    /// # let mut cart = Cartridge::create("my-data", "My Data")?;
     /// cart.write("documents/report.txt", b"Hello, World!")?;
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
     /// ```
@@ -156,7 +178,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let cart = Cartridge::open("data.cart")?;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
     /// let content = cart.read("documents/report.txt")?;
     /// println!("Content: {}", String::from_utf8_lossy(&content));
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
@@ -173,7 +195,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let mut cart = Cartridge::create("data.cart")?;
+    /// # let mut cart = Cartridge::create("my-data", "My Data")?;
     /// cart.delete("old_file.txt")?;
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
     /// ```
@@ -189,7 +211,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let cart = Cartridge::open("data.cart")?;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
     /// let files = cart.list("documents")?;
     /// for file in files {
     ///     println!("Found: {}", file);
@@ -208,7 +230,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let cart = Cartridge::open("data.cart")?;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
     /// if cart.exists("config.json")? {
     ///     println!("Config file found!");
     /// }
@@ -224,7 +246,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let cart = Cartridge::open("data.cart")?;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
     /// let meta = cart.metadata("file.txt")?;
     /// println!("Size: {} bytes", meta.size);
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
@@ -241,7 +263,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let mut cart = Cartridge::create("data.cart")?;
+    /// # let mut cart = Cartridge::create("my-data", "My Data")?;
     /// cart.create_dir("documents/reports/2025")?;
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
     /// ```
@@ -255,7 +277,7 @@ impl Cartridge {
     ///
     /// ```rust,no_run
     /// # use cartridge_rs::Cartridge;
-    /// # let mut cart = Cartridge::create("data.cart")?;
+    /// # let mut cart = Cartridge::create("my-data", "My Data")?;
     /// cart.write("file.txt", b"data")?;
     /// cart.flush()?;  // Ensure changes are persisted
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
@@ -305,8 +327,9 @@ impl Cartridge {
 ///
 /// # fn main() -> cartridge_rs::Result<()> {
 /// let cart = CartridgeBuilder::new()
-///     .path("data.cart")
-///     .blocks(100_000)  // ~400MB
+///     .slug("my-data")
+///     .title("My Data Container")
+///     .path("/data/my-container")  // Optional: custom path
 ///     .with_audit_logging()
 ///     .build()?;
 /// # Ok(())
@@ -314,7 +337,8 @@ impl Cartridge {
 /// ```
 pub struct CartridgeBuilder {
     path: Option<String>,
-    blocks: usize,
+    slug: Option<String>,
+    title: Option<String>,
     enable_audit: bool,
 }
 
@@ -323,33 +347,27 @@ impl CartridgeBuilder {
     pub fn new() -> Self {
         CartridgeBuilder {
             path: None,
-            blocks: 10_000,  // ~40MB default
+            slug: None,
+            title: None,
             enable_audit: false,
         }
     }
 
-    /// Set the path for the archive
-    pub fn path<P: Into<String>>(mut self, path: P) -> Self {
-        self.path = Some(path.into());
+    /// Set the slug (kebab-case identifier)
+    pub fn slug<S: Into<String>>(mut self, slug: S) -> Self {
+        self.slug = Some(slug.into());
         self
     }
 
-    /// Set the number of 4KB blocks (default: 10,000 = ~40MB)
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use cartridge_rs::CartridgeBuilder;
-    ///
-    /// // Create a 1GB archive
-    /// let cart = CartridgeBuilder::new()
-    ///     .blocks(250_000)  // 250,000 * 4KB = 1GB
-    ///     .path("large.cart")
-    ///     .build()?;
-    /// # Ok::<(), cartridge_rs::CartridgeError>(())
-    /// ```
-    pub fn blocks(mut self, blocks: usize) -> Self {
-        self.blocks = blocks;
+    /// Set the title (human-readable display name)
+    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set a custom path (optional, defaults to slug in current directory)
+    pub fn path<P: Into<String>>(mut self, path: P) -> Self {
+        self.path = Some(path.into());
         self
     }
 
@@ -361,16 +379,27 @@ impl CartridgeBuilder {
 
     /// Build the Cartridge instance
     pub fn build(self) -> Result<Cartridge> {
-        let path = self.path.ok_or_else(|| {
+        let slug = self.slug.ok_or_else(|| {
             CartridgeError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "path must be set",
+                "slug must be set",
             ))
         })?;
 
-        info!("Building cartridge at {} with {} blocks", path, self.blocks);
+        let title = self.title.ok_or_else(|| {
+            CartridgeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "title must be set",
+            ))
+        })?;
 
-        let mut inner = CoreCartridge::create(&path, self.blocks)?;
+        info!("Building cartridge with slug '{}', title '{}'", slug, title);
+
+        let mut inner = if let Some(path) = self.path {
+            CoreCartridge::create_at(&path, &slug, &title)?
+        } else {
+            CoreCartridge::create(&slug, &title)?
+        };
 
         if self.enable_audit {
             use cartridge_core::audit::AuditLogger;
@@ -398,10 +427,10 @@ mod tests {
 
     #[test]
     fn test_create_and_write() -> Result<()> {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        let path = temp.path().to_str().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("test-cart");
 
-        let mut cart = Cartridge::create(path)?;
+        let mut cart = Cartridge::create_at(&path, "test-cart", "Test Cartridge")?;
         cart.write("test.txt", b"hello")?;
         cart.flush()?;  // Ensure write is persisted
 
@@ -413,15 +442,17 @@ mod tests {
 
     #[test]
     fn test_builder() -> Result<()> {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        let path = temp.path().to_str().unwrap().to_string();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("builder-cart");
 
         let cart = CartridgeBuilder::new()
-            .path(path)
-            .blocks(5000)
+            .slug("builder-cart")
+            .title("Builder Cartridge")
+            .path(path.to_str().unwrap())
             .build()?;
 
-        assert_eq!(cart.inner().stats().total_blocks, 5000);
+        // Starts small with auto-growth
+        assert!(cart.inner().stats().total_blocks >= 3);
 
         Ok(())
     }
