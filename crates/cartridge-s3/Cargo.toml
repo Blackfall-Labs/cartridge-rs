@@ -1,0 +1,68 @@
+[package]
+name = "cartridge-s3"
+version = "0.2.0"
+edition = "2021"
+authors = ["Manifest Humanity"]
+description = "S3-compatible HTTP API for Cartridge storage with ACL and SSE metadata support"
+license = "Proprietary"
+
+[dependencies]
+cartridge-core = { path = "../cartridge-core" }
+
+# S3 implementation (updated to latest version)
+s3s = "0.12.0-rc.3"
+s3s-fs = "0.12.0-rc.3"  # Reference implementation
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+bytes = "1.0"
+mime = "0.3"
+
+# HTTP server
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"] }
+http-body-util = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Hashing for ETags
+sha2 = "0.10"
+hex = "0.4"
+
+# Logging
+tracing = "0.1"
+
+# Synchronization
+parking_lot = "0.12"
+
+# UUID for multipart upload IDs
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+aws-sdk-s3 = "1.0"
+aws-config = "1.0"
+tempfile = "3.8"
+tokio-test = "0.4"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cartridge-s3-server"
+path = "src/bin/server.rs"
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]
+
+[dependencies.clap]
+version = "4.4"
+features = ["derive"]
