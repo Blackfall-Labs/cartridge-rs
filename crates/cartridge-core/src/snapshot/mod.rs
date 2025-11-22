@@ -9,7 +9,6 @@
 
 use crate::error::{CartridgeError, Result};
 use crate::header::Header;
-use crate::page::Page;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

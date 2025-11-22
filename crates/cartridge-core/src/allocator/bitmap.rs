@@ -121,6 +121,27 @@ impl BitmapAllocator {
 
         (self.bitmap[word_idx] & (1u64 << bit_idx)) != 0
     }
+
+    /// Extend bitmap capacity to track more blocks
+    ///
+    /// Used by auto-growth to expand the allocator's capacity.
+    pub fn extend_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks <= self.total_blocks {
+            return Ok(()); // No need to extend
+        }
+
+        let new_num_words = (new_total_blocks + 63) / 64;
+        let old_num_words = self.bitmap.len();
+
+        // Extend bitmap with zeros (representing free blocks)
+        self.bitmap.resize(new_num_words, 0u64);
+
+        let added_blocks = new_total_blocks - self.total_blocks;
+        self.total_blocks = new_total_blocks;
+        self.free_blocks += added_blocks;
+
+        Ok(())
+    }
 }
 
 impl BlockAllocator for BitmapAllocator {

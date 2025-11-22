@@ -10,6 +10,8 @@
 //! The algorithm self-tunes parameter `p` based on workload to balance
 //! recency vs. frequency, achieving near-optimal cache hit rates.
 
+#![allow(dead_code)] // Module reserved for future use
+
 use crate::page::Page;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

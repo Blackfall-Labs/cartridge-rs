@@ -9,9 +9,19 @@ use crate::error::{CartridgeError, Result};
 use crate::header::{Header, PAGE_SIZE};
 use crate::iam::{Action, Policy, PolicyEngine};
 use crate::io::CartridgeFile;
+use crate::manifest::Manifest;
+use crate::validation;
 use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::Arc;
+
+// Auto-growth constants
+const MIN_BLOCKS: usize = 3; // Minimum: header + catalog + data
+const DEFAULT_INITIAL_BLOCKS: usize = 3; // Start minimal by default
+const GROW_THRESHOLD: f64 = 0.10; // Grow when <10% free
+const GROW_FACTOR: usize = 2; // Double size each time
+const DEFAULT_MAX_BLOCKS: usize = 10_000_000; // ~40GB safety limit
+const MANIFEST_PATH: &str = "/.cartridge/manifest.json";
 
 /// Cartridge archive
 ///
@@ -47,6 +57,12 @@ pub struct Cartridge {
 
     /// IAM policy engine for evaluation - uses interior mutability for cache updates
     policy_engine: Option<Arc<Mutex<PolicyEngine>>>,
+
+    /// Enable automatic growth (default: true)
+    auto_grow: bool,
+
+    /// Maximum blocks allowed (prevents runaway growth)
+    max_blocks: usize,
 }
 
 impl Cartridge {
@@ -75,18 +91,45 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
+            auto_grow: true,
+            max_blocks: DEFAULT_MAX_BLOCKS,
         }
     }
 
-    /// Create a new disk-backed cartridge
-    pub fn create<P: AsRef<Path>>(path: P, total_blocks: usize) -> Result<Self> {
+    /// Create a new disk-backed cartridge with slug and title
+    ///
+    /// # Arguments
+    ///
+    /// * `slug` - Kebab-case identifier (used as filename, without .cart extension)
+    /// * `title` - Human-readable display name
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use cartridge_core::Cartridge;
+    ///
+    /// // Creates "my-container.cart" in current directory
+    /// let cart = Cartridge::create("my-container", "My Container")?;
+    /// ```
+    pub fn create(
+        slug: &str,
+        title: &str,
+    ) -> Result<Self> {
+        // Validate slug and create path from it
+        let slug_validated = validation::ContainerSlug::new(slug)?;
+        let path = std::path::PathBuf::from(slug_validated.as_str());
+        let normalized_path = validation::normalize_container_path(&path)?;
+
+        // Create with minimal initial blocks (auto-growth enabled by default)
+        let total_blocks = DEFAULT_INITIAL_BLOCKS;
+
         let mut header = Header::new();
         header.total_blocks = total_blocks as u64;
         // Reserve pages 0, 1, 2 for header, catalog, allocator
         header.free_blocks = (total_blocks - 3) as u64;
         header.btree_root_page = 1;
 
-        let file = CartridgeFile::create(path, &header)?;
+        let file = CartridgeFile::create(normalized_path, &header)?;
 
         let mut allocator = HybridAllocator::new(total_blocks);
         // Mark pages 0, 1, 2 as allocated (reserved)
@@ -94,7 +137,7 @@ impl Cartridge {
 
         let catalog = Catalog::new(1);
 
-        Ok(Cartridge {
+        let mut cartridge = Cartridge {
             header,
             allocator,
             catalog,
@@ -105,19 +148,111 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
-        })
+            auto_grow: true,
+            max_blocks: DEFAULT_MAX_BLOCKS,
+        };
+
+        // Create manifest
+        let manifest = Manifest::new(slug, title, semver::Version::new(0, 1, 0))?;
+        let manifest_json = serde_json::to_vec_pretty(&manifest)?;
+
+        // Ensure /.cartridge directory exists
+        cartridge.create_dir("/.cartridge")?;
+
+        // Write manifest to /.cartridge/manifest.json
+        cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
+
+        Ok(cartridge)
+    }
+
+    /// Create a new disk-backed cartridge at a specific path
+    ///
+    /// Use this when you need to specify a custom directory or path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Full path where the cartridge will be created (without .cart extension)
+    /// * `slug` - Kebab-case identifier for the container
+    /// * `title` - Human-readable display name
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use cartridge_core::Cartridge;
+    ///
+    /// // Creates "/data/my-container.cart"
+    /// let cart = Cartridge::create_at("/data/my-container", "my-container", "My Container")?;
+    /// ```
+    pub fn create_at<P: AsRef<Path>>(
+        path: P,
+        slug: &str,
+        title: &str,
+    ) -> Result<Self> {
+        // Validate slug
+        let _slug_validated = validation::ContainerSlug::new(slug)?;
+        let normalized_path = validation::normalize_container_path(path.as_ref())?;
+
+        // Create with minimal initial blocks (auto-growth enabled by default)
+        let total_blocks = DEFAULT_INITIAL_BLOCKS;
+
+        let mut header = Header::new();
+        header.total_blocks = total_blocks as u64;
+        // Reserve pages 0, 1, 2 for header, catalog, allocator
+        header.free_blocks = (total_blocks - 3) as u64;
+        header.btree_root_page = 1;
+
+        let file = CartridgeFile::create(normalized_path, &header)?;
+
+        let mut allocator = HybridAllocator::new(total_blocks);
+        // Mark pages 0, 1, 2 as allocated (reserved)
+        allocator.allocate(3 * PAGE_SIZE as u64)?;
+
+        let catalog = Catalog::new(1);
+
+        let mut cartridge = Cartridge {
+            header,
+            allocator,
+            catalog,
+            file: Some(Mutex::new(file)),
+            pages: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            dirty_pages: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            audit_logger: None,
+            session_id: 0,
+            policy: None,
+            policy_engine: None,
+            auto_grow: true,
+            max_blocks: DEFAULT_MAX_BLOCKS,
+        };
+
+        // Create manifest
+        let manifest = Manifest::new(slug, title, semver::Version::new(0, 1, 0))?;
+        let manifest_json = serde_json::to_vec_pretty(&manifest)?;
+
+        // Ensure /.cartridge directory exists
+        cartridge.create_dir("/.cartridge")?;
+
+        // Write manifest to /.cartridge/manifest.json
+        cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
+
+        Ok(cartridge)
     }
 
     /// Open an existing disk-backed cartridge
+    ///
+    /// Loads the manifest if present. For backwards compatibility,
+    /// containers without manifests will open successfully with a warning.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut file = CartridgeFile::open(path)?;
+        // Normalize path (handles .cart extension)
+        let normalized_path = validation::normalize_container_path(path.as_ref())?;
+
+        let mut file = CartridgeFile::open(normalized_path)?;
         let header = file.read_header()?;
 
         // Load catalog and allocator from disk
         let catalog = Self::load_catalog(&mut file, header.btree_root_page)?;
         let allocator = Self::load_allocator(&mut file, header.total_blocks as usize)?;
 
-        Ok(Cartridge {
+        let cartridge = Cartridge {
             header,
             allocator,
             catalog,
@@ -128,7 +263,18 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
-        })
+            auto_grow: true,
+            max_blocks: DEFAULT_MAX_BLOCKS,
+        };
+
+        // Try to load manifest (optional for backwards compatibility)
+        if let Ok(exists) = cartridge.exists(MANIFEST_PATH) {
+            if !exists {
+                tracing::warn!("Container opened without manifest (legacy container)");
+            }
+        }
+
+        Ok(cartridge)
     }
 
     /// Flush all dirty pages to disk
@@ -393,6 +539,11 @@ impl Cartridge {
             )));
         }
 
+        // Ensure capacity before allocating
+        if !content.is_empty() {
+            self.ensure_capacity(content.len())?;
+        }
+
         // Allocate blocks for content
         let blocks = if content.is_empty() {
             Vec::new()
@@ -450,6 +601,11 @@ impl Cartridge {
 
         if !metadata.is_file() {
             return Err(CartridgeError::Allocation(format!("Not a file: {}", path)));
+        }
+
+        // Ensure capacity before allocating
+        if !content.is_empty() {
+            self.ensure_capacity(content.len())?;
         }
 
         // Free old blocks
@@ -591,6 +747,127 @@ impl Cartridge {
             used_blocks: self.header.total_blocks - self.header.free_blocks,
             fragmentation: self.allocator.fragmentation_score(),
         }
+    }
+
+    /// Read container manifest
+    ///
+    /// Returns an error if the manifest doesn't exist or is invalid.
+    pub fn read_manifest(&self) -> Result<Manifest> {
+        let manifest_data = self.read_file(MANIFEST_PATH)?;
+        let manifest: Manifest = serde_json::from_slice(&manifest_data)?;
+        Ok(manifest)
+    }
+
+    /// Write/update container manifest
+    ///
+    /// Overwrites the existing manifest at /.cartridge/manifest.json
+    pub fn write_manifest(&mut self, manifest: &Manifest) -> Result<()> {
+        let manifest_json = serde_json::to_vec_pretty(manifest)?;
+
+        // Check if manifest file exists
+        if self.exists(MANIFEST_PATH)? {
+            self.write_file(MANIFEST_PATH, &manifest_json)?;
+        } else {
+            // Ensure directory exists
+            if !self.exists("/.cartridge")? {
+                self.create_dir("/.cartridge")?;
+            }
+            self.create_file(MANIFEST_PATH, &manifest_json)?;
+        }
+
+        Ok(())
+    }
+
+    /// Get container slug from manifest
+    ///
+    /// Returns an error if manifest doesn't exist.
+    pub fn slug(&self) -> Result<String> {
+        let manifest = self.read_manifest()?;
+        Ok(manifest.slug.into_string())
+    }
+
+    /// Get container title from manifest
+    ///
+    /// Returns an error if manifest doesn't exist.
+    pub fn title(&self) -> Result<String> {
+        let manifest = self.read_manifest()?;
+        Ok(manifest.title)
+    }
+
+    /// Update manifest with a closure
+    ///
+    /// Loads the manifest, applies the closure, and writes it back.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use cartridge_core::Cartridge;
+    /// # fn example(mut cart: Cartridge) -> Result<(), Box<dyn std::error::Error>> {
+    /// cart.update_manifest(|manifest| {
+    ///     manifest.description = Some("Updated description".to_string());
+    /// })?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn update_manifest<F>(&mut self, f: F) -> Result<()>
+    where
+        F: FnOnce(&mut Manifest),
+    {
+        let mut manifest = self.read_manifest()?;
+        f(&mut manifest);
+        self.write_manifest(&manifest)?;
+        Ok(())
+    }
+
+    /// Ensure sufficient capacity, growing if needed
+    ///
+    /// This method is called before allocating space for file operations.
+    /// If auto-growth is enabled and free space is insufficient,
+    /// the container will automatically grow (potentially multiple times).
+    fn ensure_capacity(&mut self, bytes_needed: usize) -> Result<()> {
+        if !self.auto_grow {
+            return Ok(()); // Manual management
+        }
+
+        let blocks_needed = (bytes_needed + PAGE_SIZE - 1) / PAGE_SIZE;
+
+        // Keep growing until we have enough free space
+        while (self.header.free_blocks as usize) < blocks_needed {
+            self.grow()?;
+        }
+
+        Ok(())
+    }
+
+    /// Grow container capacity
+    ///
+    /// Doubles the container size (or grows to max_blocks limit).
+    /// Updates header, extends file, and extends allocator capacity.
+    fn grow(&mut self) -> Result<()> {
+        let current = self.header.total_blocks as usize;
+        let new_total = (current * GROW_FACTOR).min(self.max_blocks);
+
+        if new_total == current {
+            return Err(CartridgeError::OutOfSpace);
+        }
+
+        tracing::info!("Growing container: {} -> {} blocks", current, new_total);
+
+        // Extend file (if disk-backed)
+        if let Some(file) = &self.file {
+            let mut f = file.lock();
+            f.extend(new_total)?;
+        }
+
+        // Update header
+        let added_blocks = new_total - current;
+        self.header.total_blocks = new_total as u64;
+        self.header.free_blocks += added_blocks as u64;
+
+        // Extend allocator capacity
+        self.allocator.extend_capacity(new_total)?;
+
+        Ok(())
     }
 
     /// Write content to blocks
@@ -793,7 +1070,7 @@ mod tests {
         let path = temp_dir.path().join("test.cart");
 
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("test.txt", b"Hello, Disk!").unwrap();
             cart.close().unwrap();
         }
@@ -817,7 +1094,7 @@ mod tests {
 
         // Create and write
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("test.txt", b"Hello, World!").unwrap();
             cart.create_file("data.bin", &vec![42u8; 1024]).unwrap();
             cart.create_dir("/home/user").unwrap();
@@ -851,7 +1128,7 @@ mod tests {
 
         // Create and write
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("large.bin", &large_content).unwrap();
             cart.close().unwrap();
         }
@@ -873,7 +1150,7 @@ mod tests {
 
         // Create with original content
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("test.txt", b"original").unwrap();
             cart.close().unwrap();
         }
@@ -901,7 +1178,7 @@ mod tests {
 
         // Create multiple files
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("file1.txt", b"data1").unwrap();
             cart.create_file("file2.txt", b"data2").unwrap();
             cart.create_file("file3.txt", b"data3").unwrap();
@@ -930,7 +1207,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("flush.cart");
 
-        let mut cart = Cartridge::create(&path, 1000).unwrap();
+        let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
         cart.create_file("test.txt", b"data").unwrap();
 
         // Explicit flush without closing
@@ -949,25 +1226,27 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("stats.cart");
 
+        let initial_total;
         let initial_used;
 
         // Create with some files
         {
-            let mut cart = Cartridge::create(&path, 1000).unwrap();
+            let mut cart = Cartridge::create_at(&path, "test", "Test Container").unwrap();
             cart.create_file("test.txt", b"Hello").unwrap();
             let stats = cart.stats();
+            initial_total = stats.total_blocks;
             initial_used = stats.used_blocks;
             assert!(initial_used > 0);
             cart.close().unwrap();
         }
 
-        // Reopen and verify stats
+        // Reopen and verify stats persist correctly
         {
             let cart = Cartridge::open(&path).unwrap();
             let stats = cart.stats();
-            assert_eq!(stats.total_blocks, 1000);
+            assert_eq!(stats.total_blocks, initial_total);
             assert_eq!(stats.used_blocks, initial_used);
-            assert_eq!(stats.free_blocks + stats.used_blocks, 1000);
+            assert_eq!(stats.free_blocks + stats.used_blocks, initial_total);
         }
     }
 
@@ -1017,6 +1296,89 @@ mod tests {
         cart.create_file("/data/private.txt", b"private").unwrap();
         let result = cart.read_file("/data/private.txt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auto_growth() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("growth.cart");
+
+        let mut cart = Cartridge::create_at(&path, "test-growth", "Test Growth").unwrap();
+
+        // Container starts small (manifest directory/file may have already caused growth)
+        let initial_stats = cart.stats();
+        assert!(initial_stats.total_blocks >= 3); // At least 3 blocks
+
+        // Add content that requires significant growth (100KB needs ~25 blocks)
+        let large_data = vec![0u8; 100_000];
+        cart.create_file("large.bin", &large_data).unwrap();
+
+        // Should have grown automatically to accommodate the data
+        let after_stats = cart.stats();
+        assert!(after_stats.total_blocks >= 25); // At least enough for the data
+        assert!(after_stats.total_blocks > initial_stats.total_blocks); // Grew from initial
+
+        // Verify we can read the file back
+        let read_data = cart.read_file("large.bin").unwrap();
+        assert_eq!(read_data.len(), 100_000);
+
+        cart.close().unwrap();
+    }
+
+    #[test]
+    fn test_manifest_creation_and_read() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("manifest-test.cart");
+
+        // Create with slug and title
+        {
+            let mut cart = Cartridge::create_at(&path, "us-const", "U.S. Constitution").unwrap();
+
+            // Read manifest
+            let manifest = cart.read_manifest().unwrap();
+            assert_eq!(manifest.slug.as_str(), "us-const");
+            assert_eq!(manifest.title, "U.S. Constitution");
+            assert_eq!(manifest.version, semver::Version::new(0, 1, 0));
+
+            // Test convenience methods
+            assert_eq!(cart.slug().unwrap(), "us-const");
+            assert_eq!(cart.title().unwrap(), "U.S. Constitution");
+
+            cart.close().unwrap();
+        }
+
+        // Reopen and verify manifest persists
+        {
+            let cart = Cartridge::open(&path).unwrap();
+            let manifest = cart.read_manifest().unwrap();
+            assert_eq!(manifest.slug.as_str(), "us-const");
+            assert_eq!(manifest.title, "U.S. Constitution");
+        }
+    }
+
+    #[test]
+    fn test_manifest_update() {
+        let mut cart = Cartridge::new(100);
+
+        // Manually create a manifest for in-memory cartridge
+        let manifest = Manifest::new("test", "Test", semver::Version::new(1, 0, 0)).unwrap();
+        cart.create_dir("/.cartridge").unwrap();
+        cart.write_manifest(&manifest).unwrap();
+
+        // Update using the closure API
+        cart.update_manifest(|m| {
+            m.description = Some("Updated description".to_string());
+        })
+        .unwrap();
+
+        // Verify update persisted
+        let updated = cart.read_manifest().unwrap();
+        assert_eq!(
+            updated.description,
+            Some("Updated description".to_string())
+        );
     }
 
     #[test]

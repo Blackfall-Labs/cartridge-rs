@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/cartridge-core",
+    "crates/cartridge-rs",
     "crates/cartridge-s3",
 ]
 

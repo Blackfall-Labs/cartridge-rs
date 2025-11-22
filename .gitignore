@@ -23,3 +23,6 @@ test_output/
 
 # Backup files
 *.bak
+
+# Environment variables (contains secrets)
+.env

@@ -110,22 +110,27 @@
 //! See [`PLAN_CARTRIDGE_IMPLEMENTATION.md`](../../PLAN_CARTRIDGE_IMPLEMENTATION.md)
 //! for the complete implementation roadmap.
 
+// Core modules (public - users need direct access)
 pub mod allocator;
 pub mod audit;
-pub mod buffer_pool;
 pub mod cartridge;
 pub mod catalog;
-pub mod compression;
-pub mod encryption;
 pub mod engram_integration;
 pub mod error;
 pub mod header;
 pub mod iam;
-pub mod integration_tests;
 pub mod io;
+pub mod manifest;
 pub mod page;
 pub mod snapshot;
+pub mod validation;
 pub mod vfs;
+
+// Internal modules (private - implementation details)
+pub(crate) mod buffer_pool;
+pub(crate) mod compression;
+pub(crate) mod encryption;
+mod integration_tests;
 
 // Re-export commonly used types
 pub use allocator::{
