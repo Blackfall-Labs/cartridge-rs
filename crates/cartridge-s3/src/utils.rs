@@ -80,6 +80,7 @@ pub fn key_to_path(bucket: &str, key: &str) -> String {
 /// Parse Cartridge path into bucket and key
 ///
 /// Example: "/mybucket/file.txt" → ("mybucket", "file.txt")
+#[allow(dead_code)] // Reserved for future use
 pub fn path_to_bucket_key(path: &str) -> Option<(String, String)> {
     let path = path.strip_prefix('/')?;
     let parts: Vec<&str> = path.splitn(2, '/').collect();

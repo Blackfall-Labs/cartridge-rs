@@ -93,7 +93,7 @@ impl BTreeNode {
 
         let median_key = right_entries[0].key.clone();
 
-        let mut right_node = if self.is_leaf() {
+        let right_node = if self.is_leaf() {
             // Leaf split: keep median in left, copy to right
             let mut node = BTreeNode::new_leaf(new_page_id);
             node.entries = right_entries;

@@ -80,6 +80,17 @@ impl HybridAllocator {
             combined_fragmentation: self.combined_fragmentation_score(),
         }
     }
+
+    /// Extend allocator capacity to new block count
+    ///
+    /// Used by auto-growth to expand the allocator's tracking capacity.
+    pub fn extend_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        // Extend both allocators
+        self.bitmap.extend_capacity(new_total_blocks)?;
+        self.extent.extend_capacity(new_total_blocks)?;
+        self.total_blocks = new_total_blocks;
+        Ok(())
+    }
 }
 
 /// Statistics about hybrid allocator usage

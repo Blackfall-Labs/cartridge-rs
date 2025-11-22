@@ -121,6 +121,15 @@ impl CartridgeFile {
         self.file.sync_all()?;
         Ok(())
     }
+
+    /// Extend file to new block count
+    ///
+    /// Used by auto-growth to expand the container size.
+    pub fn extend(&mut self, new_total_blocks: usize) -> Result<()> {
+        let new_size = new_total_blocks * PAGE_SIZE;
+        self.file.set_len(new_size as u64)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -9,9 +9,9 @@
 //! - Format: [method: u8][compressed_size: u32][compressed_data]
 //! - Fallback: Store uncompressed if compression ratio < 0.9
 
+#![allow(dead_code)] // Module reserved for future use
+
 use crate::error::{CartridgeError, Result};
-use crate::header::PAGE_SIZE;
-use crate::page::PageHeader;
 
 /// Compression method for content pages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

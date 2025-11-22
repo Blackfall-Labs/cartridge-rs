@@ -229,6 +229,42 @@ impl ExtentAllocator {
     pub fn extent_count(&self) -> usize {
         self.free_extents.len()
     }
+
+    /// Extend extent allocator capacity to track more blocks
+    ///
+    /// Used by auto-growth to expand the allocator's capacity.
+    pub fn extend_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks <= self.total_blocks {
+            return Ok(()); // No need to extend
+        }
+
+        let added_blocks = new_total_blocks - self.total_blocks;
+        let new_extent_start = self.total_blocks as u64;
+
+        // Add the new blocks as a free extent
+        let new_extent = Extent::new(new_extent_start, added_blocks as u64);
+
+        // Try to coalesce with the last extent if it's adjacent
+        if let Some((&last_start, &last_extent)) = self.free_extents.iter().next_back() {
+            if last_start + last_extent.length == new_extent_start {
+                // Coalesce with the last extent
+                self.free_extents.remove(&last_start);
+                let coalesced = Extent::new(last_start, last_extent.length + added_blocks as u64);
+                self.free_extents.insert(last_start, coalesced);
+            } else {
+                // Add as a new extent
+                self.free_extents.insert(new_extent_start, new_extent);
+            }
+        } else {
+            // No extents exist, just add the new one
+            self.free_extents.insert(new_extent_start, new_extent);
+        }
+
+        self.total_blocks = new_total_blocks;
+        self.free_blocks += added_blocks;
+
+        Ok(())
+    }
 }
 
 impl BlockAllocator for ExtentAllocator {

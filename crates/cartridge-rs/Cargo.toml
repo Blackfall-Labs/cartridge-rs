@@ -1,0 +1,25 @@
+[package]
+name = "cartridge-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/manifest-humanity/cartridge"
+description = "High-level API for Cartridge mutable archive format"
+readme = "README.md"
+
+[dependencies]
+# Core implementation
+cartridge-core = { path = "../cartridge-core" }
+
+# Engram integration
+engram-rs = { git = "https://github.com/Manifest-Humanity/engram-core", branch = "engram-rs-migration" }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.12"

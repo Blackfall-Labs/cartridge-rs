@@ -40,6 +40,21 @@ pub enum CartridgeError {
 
     #[error("Fragmentation score calculation failed")]
     FragmentationError,
+
+    #[error("Invalid container slug: {0} (must be kebab-case: lowercase, hyphens, no spaces)")]
+    InvalidContainerSlug(String),
+
+    #[error("Invalid version: {0} (must be valid semver: e.g., 1.0.0)")]
+    InvalidVersion(String),
+
+    #[error("Invalid path: path does not contain a valid file name")]
+    InvalidPath,
+
+    #[error("Manifest not found: container does not contain /.cartridge/manifest.json")]
+    ManifestNotFound,
+
+    #[error("Manifest validation failed: {0}")]
+    ManifestValidation(String),
 }
 
 pub type Result<T> = std::result::Result<T, CartridgeError>;

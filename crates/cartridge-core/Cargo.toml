@@ -8,7 +8,7 @@ description = "High-performance mutable archive format with SQLite VFS support"
 
 [dependencies]
 # Engram integration (reuse existing crypto/compression)
-engram-rs = { path = "../../../engram-core" }
+engram-rs = { git = "https://github.com/Manifest-Humanity/engram-core", branch = "engram-rs-migration" }
 
 # Core
 serde = { version = "1.0", features = ["derive"] }
@@ -16,6 +16,10 @@ serde_json = "1.0"
 toml = "0.8"
 thiserror = "1.0"
 anyhow = "1.0"
+
+# Validation
+semver = { version = "1.0", features = ["serde"] }
+validator = { version = "0.18", features = ["derive"] }
 
 # Hashing (xxhash for path hashing, sha2 for checksums)
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

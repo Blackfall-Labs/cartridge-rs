@@ -12,6 +12,8 @@
 //! - Master key must be 32 bytes (256 bits)
 //! - Authenticated encryption prevents tampering
 
+#![allow(dead_code)] // Module reserved for future use
+
 use crate::error::{CartridgeError, Result};
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},

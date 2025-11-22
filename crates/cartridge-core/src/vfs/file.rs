@@ -46,7 +46,7 @@ unsafe extern "C" fn file_read(
 ) -> c_int {
     let cart_file = &mut *(file as *mut CartridgeFile);
     let vfs = &*cart_file.vfs;
-    let mut cartridge = vfs.cartridge().lock();
+    let cartridge = vfs.cartridge().lock();
 
     // Check bounds
     if offset < 0 {
