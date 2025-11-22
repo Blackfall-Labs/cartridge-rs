@@ -14,7 +14,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use cartridge_core::Cartridge;
+//! use cartridge::Cartridge;
 //! use cartridge_s3::CartridgeS3Backend;
 //! use parking_lot::RwLock;
 //! use std::sync::Arc;

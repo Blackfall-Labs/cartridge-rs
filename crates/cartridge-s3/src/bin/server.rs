@@ -2,8 +2,8 @@
 //!
 //! S3-compatible HTTP server backed by Cartridge storage
 
-use cartridge_core::header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
-use cartridge_core::Cartridge;
+use cartridge::header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
+use cartridge::Cartridge;
 use cartridge_s3::CartridgeS3Backend;
 use clap::Parser;
 use parking_lot::RwLock;
