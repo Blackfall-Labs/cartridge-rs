@@ -5,8 +5,8 @@ use crate::multipart::MultipartManager;
 use crate::utils::{
     bucket_to_path, compute_hash, generate_etag, key_to_path, validate_bucket_name, validate_key,
 };
-use cartridge_core::header::S3FeatureFuses;
-use cartridge_core::Cartridge;
+use cartridge::header::S3FeatureFuses;
+use cartridge::Cartridge;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -222,7 +222,7 @@ impl CartridgeS3Backend {
 
     /// Put object ACL
     pub fn put_object_acl(&self, bucket: &str, key: &str, acl: &crate::acl::S3Acl) -> S3Result<()> {
-        use cartridge_core::header::S3AclMode;
+        use cartridge::header::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore => {
@@ -254,7 +254,7 @@ impl CartridgeS3Backend {
 
     /// Get object ACL
     pub fn get_object_acl(&self, bucket: &str, key: &str) -> S3Result<crate::acl::S3Acl> {
-        use cartridge_core::header::S3AclMode;
+        use cartridge::header::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore => {
@@ -295,7 +295,7 @@ impl CartridgeS3Backend {
         user: &str,
         required: &crate::acl::S3Permission,
     ) -> S3Result<bool> {
-        use cartridge_core::header::S3AclMode;
+        use cartridge::header::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore | S3AclMode::Record => {
@@ -319,7 +319,7 @@ impl CartridgeS3Backend {
         data: &[u8],
         sse: &crate::sse::SseHeaders,
     ) -> S3Result<String> {
-        use cartridge_core::header::S3SseMode;
+        use cartridge::header::S3SseMode;
 
         // Always write the object first
         let etag = self.put_object(bucket, key, data)?;
@@ -356,7 +356,7 @@ impl CartridgeS3Backend {
         bucket: &str,
         key: &str,
     ) -> S3Result<(Vec<u8>, Option<crate::sse::SseHeaders>)> {
-        use cartridge_core::header::S3SseMode;
+        use cartridge::header::S3SseMode;
 
         // Always read the object first
         let data = self.get_object(bucket, key)?;
@@ -393,7 +393,7 @@ impl CartridgeS3Backend {
 
     /// Get SSE headers only (for HEAD requests)
     pub fn get_sse_headers(&self, bucket: &str, key: &str) -> S3Result<Option<crate::sse::SseHeaders>> {
-        use cartridge_core::header::S3SseMode;
+        use cartridge::header::S3SseMode;
 
         match self.s3_fuses.sse_mode {
             S3SseMode::Ignore | S3SseMode::Record => Ok(None),

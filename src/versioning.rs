@@ -4,7 +4,7 @@
 //! mapped to Cartridge snapshot IDs, providing full version history.
 
 use crate::error::{S3Error, S3Result};
-use cartridge_core::Cartridge;
+use cartridge::Cartridge;
 use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -100,7 +100,7 @@ impl VersioningManager {
     ///
     /// Returns (key, version_id) pairs for all snapshots containing matching objects.
     pub fn list_versions(&self, prefix: &str) -> S3Result<Vec<(String, VersionId)>> {
-        use cartridge_core::snapshot::SnapshotManager;
+        use cartridge::snapshot::SnapshotManager;
 
         let manager = SnapshotManager::new(&self.snapshot_dir)
             .map_err(|e| S3Error::Internal(format!("Failed to open snapshot manager: {}", e)))?;
@@ -138,7 +138,7 @@ impl VersioningManager {
     ///
     /// Deletes the snapshot corresponding to the version ID.
     pub fn delete_version(&self, key: &str, version_id: &VersionId) -> S3Result<()> {
-        use cartridge_core::snapshot::SnapshotManager;
+        use cartridge::snapshot::SnapshotManager;
 
         let snapshot_id = self.parse_version_id(version_id)?;
 
@@ -178,7 +178,7 @@ pub fn should_create_version(versioning_enabled: bool, object_exists: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cartridge_core::Cartridge;
+    use cartridge::Cartridge;
     use std::sync::Arc;
     use tempfile::TempDir;
 
