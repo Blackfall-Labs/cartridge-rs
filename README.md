@@ -36,7 +36,7 @@ The core mutable archive format with SQLite VFS support.
 - LZ4 Compression: 9.77 GiB/s
 - LZ4 Decompression: 38.12 GiB/s
 
-[Read more →](crates/cartridge-core/README.md)
+[Read more →](docs/CARTRIDGE_CORE_README.md)
 
 ### 🌐 cartridge-s3
 
@@ -55,7 +55,7 @@ S3-compatible HTTP API for Cartridge storage.
 aws s3 --endpoint-url=http://localhost:9000 cp file.txt s3://my-bucket/
 ```
 
-[Read more →](crates/cartridge-s3/README.md)
+[Read cartridge-s3 docs →](docs/)
 
 ## Quick Start
 
@@ -159,11 +159,24 @@ RUST_LOG=debug cargo test
 
 ## Documentation
 
-- [Cartridge Core README](crates/cartridge-core/README.md)
-- [Cartridge Core Architecture](crates/cartridge-core/ARCHITECTURE.md)
-- [Cartridge Core Specification](crates/cartridge-core/SPECIFICATION.md)
-- [Cartridge S3 README](crates/cartridge-s3/README.md)
-- [Performance Benchmarks](crates/cartridge-core/performance.md)
+All documentation is located in the [`docs/`](docs/) directory:
+
+**Core Documentation:**
+- [Cartridge Core README](docs/CARTRIDGE_CORE_README.md) - Complete user guide
+- [Architecture](docs/ARCHITECTURE.md) - Deep technical architecture
+- [Specification](docs/SPECIFICATION.md) - Binary format specification v0.1
+- [Performance Benchmarks](docs/performance.md) - Comprehensive benchmark results
+- [Executive Summary](docs/CARTRIDGE_EXECUTIVE_SUMMARY.md) - Production readiness report
+
+**S3 Documentation:**
+- [Cartridge S3 README](docs/CARTRIDGE_S3_README.md) - Complete S3 user guide
+- [S3 Implementation Plan](docs/S3_PLAN.md) - S3 integration planning
+- [S3 Status](docs/S3_STATUS.md) - S3 implementation status
+- [S3 v0.2 Feature Fuses](docs/CARTRIDGE_S3_0.2_PLAN.md) - Version 0.2 feature plan
+
+**Planning & Research:**
+- [Implementation Plan](docs/PLAN_CARTRIDGE_IMPLEMENTATION.md) - Complete implementation roadmap
+- [Format Research](docs/Cartridge%20Format%20Research.pdf) - Original research document
 
 ## Status
 
