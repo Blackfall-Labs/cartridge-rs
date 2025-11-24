@@ -62,8 +62,158 @@ pub use cartridge_core::{
 };
 
 use cartridge_core::Cartridge as CoreCartridge;
+use serde::{Serialize, Deserialize};
 use std::path::Path;
+use std::collections::HashSet;
 use tracing::{debug, info};
+
+/// Rich metadata about a file or directory in the archive
+///
+/// Entry provides a convenient view of files and directories with parsed metadata,
+/// eliminating the need for consumers to manually parse paths and build hierarchies.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use cartridge_rs::Cartridge;
+///
+/// # fn main() -> cartridge_rs::Result<()> {
+/// let cart = Cartridge::open("data.cart")?;
+/// let entries = cart.list_entries("documents")?;
+///
+/// for entry in entries {
+///     if entry.is_dir {
+///         println!("📁 {} ({})", entry.name, entry.path);
+///     } else {
+///         println!("📄 {} ({} bytes)", entry.name, entry.size.unwrap_or(0));
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Entry {
+    /// Full path in the archive (e.g., "research/notes/overview.cml")
+    pub path: String,
+
+    /// Just the name (e.g., "overview.cml" or "notes")
+    pub name: String,
+
+    /// Parent directory path (e.g., "research/notes")
+    /// Empty string for root-level entries
+    pub parent: String,
+
+    /// True if this is a directory (has children under this prefix)
+    pub is_dir: bool,
+
+    /// File size in bytes (None for directories or if unavailable)
+    pub size: Option<u64>,
+
+    /// Creation timestamp as Unix epoch seconds (None if unavailable)
+    pub created: Option<u64>,
+
+    /// Last modification timestamp as Unix epoch seconds (None if unavailable)
+    pub modified: Option<u64>,
+
+    /// MIME type or content type (None if unavailable)
+    pub content_type: Option<String>,
+
+    /// File type (File, Directory, or Symlink)
+    pub file_type: FileType,
+}
+
+/// Convert flat paths to Entry objects with rich metadata
+///
+/// This helper parses paths, infers directory structure, and fetches metadata
+/// from the cartridge for each entry. Internal .cartridge/ files are filtered out.
+fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    let mut seen_dirs: HashSet<String> = HashSet::new();
+
+    // Process each file path
+    for path in paths {
+        // Skip internal .cartridge directory (with or without leading slash)
+        if path.starts_with(".cartridge/") || path == ".cartridge"
+            || path.starts_with("/.cartridge") {
+            continue;
+        }
+        // Extract name and parent from path
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let parent = if let Some(idx) = path.rfind('/') {
+            if idx == 0 {
+                // Root level: "/file.txt" -> parent is "/"
+                "/".to_string()
+            } else {
+                path[..idx].to_string()
+            }
+        } else {
+            String::new()
+        };
+
+        // Fetch metadata for the file
+        let metadata = cart.metadata(path).ok();
+
+        // Create entry for the file
+        entries.push(Entry {
+            path: path.clone(),
+            name,
+            parent: parent.clone(),
+            is_dir: false,
+            size: metadata.as_ref().map(|m| m.size),
+            created: metadata.as_ref().map(|m| m.created_at),
+            modified: metadata.as_ref().map(|m| m.modified_at),
+            content_type: metadata.as_ref().and_then(|m| m.content_type.clone()),
+            file_type: metadata.as_ref().map(|m| m.file_type).unwrap_or(FileType::File),
+        });
+
+        // Add parent directories (if not already seen)
+        let mut current_parent = parent.as_str();
+        while !current_parent.is_empty() && current_parent != "/" {
+            if seen_dirs.insert(current_parent.to_string()) {
+                let parent_name = current_parent.rsplit('/').next().unwrap_or(current_parent).to_string();
+                let grandparent = if let Some(idx) = current_parent.rfind('/') {
+                    if idx == 0 {
+                        "/".to_string()
+                    } else {
+                        current_parent[..idx].to_string()
+                    }
+                } else {
+                    String::new()
+                };
+
+                entries.push(Entry {
+                    path: current_parent.to_string(),
+                    name: parent_name,
+                    parent: grandparent,
+                    is_dir: true,
+                    size: None,
+                    created: None,
+                    modified: None,
+                    content_type: None,
+                    file_type: FileType::Directory,
+                });
+            }
+
+            // Move up the tree
+            if let Some(idx) = current_parent.rfind('/') {
+                current_parent = &current_parent[..idx];
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Sort: directories first, then alphabetically by name
+    entries.sort_by(|a, b| {
+        match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        }
+    });
+
+    Ok(entries)
+}
 
 /// High-level Cartridge archive API
 ///
@@ -222,6 +372,93 @@ impl Cartridge {
         let path = path.as_ref();
         debug!("Listing directory {}", path);
         self.inner.list_dir(path)
+    }
+
+    /// List all entries with rich metadata under a given prefix
+    ///
+    /// Returns Entry objects with parsed path components, file metadata,
+    /// and inferred directory information. This eliminates the need to
+    /// manually parse paths and build hierarchies.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
+    /// let entries = cart.list_entries("documents")?;
+    /// for entry in entries {
+    ///     if entry.is_dir {
+    ///         println!("📁 {}", entry.name);
+    ///     } else {
+    ///         println!("📄 {} ({} bytes)", entry.name, entry.size.unwrap_or(0));
+    ///     }
+    /// }
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn list_entries<P: AsRef<str>>(&self, prefix: P) -> Result<Vec<Entry>> {
+        let prefix = prefix.as_ref();
+        debug!("Listing entries under prefix {}", prefix);
+        let paths = self.inner.list_dir(prefix)?;
+        paths_to_entries(&self.inner, &paths, prefix)
+    }
+
+    /// List immediate children of a directory
+    ///
+    /// Like `list_entries()` but filters to only direct children,
+    /// providing a traditional directory-style listing.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
+    /// // List only immediate children of "documents"
+    /// let children = cart.list_children("documents")?;
+    /// for child in children {
+    ///     println!("{} - parent: {}", child.name, child.parent);
+    /// }
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn list_children<P: AsRef<str>>(&self, parent: P) -> Result<Vec<Entry>> {
+        let parent = parent.as_ref();
+        debug!("Listing immediate children of {}", parent);
+        let all_entries = self.list_entries(parent)?;
+
+        // Filter to immediate children only
+        Ok(all_entries
+            .into_iter()
+            .filter(|e| e.parent == parent)
+            .collect())
+    }
+
+    /// Check if a path is a directory
+    ///
+    /// Returns true if the path has children (i.e., is a directory),
+    /// false otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
+    /// if cart.is_dir("documents")? {
+    ///     println!("documents is a directory");
+    /// }
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn is_dir<P: AsRef<str>>(&self, path: P) -> Result<bool> {
+        let path = path.as_ref();
+        debug!("Checking if {} is a directory", path);
+
+        // A path is a directory if it has children
+        let prefix = if path.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", path)
+        };
+
+        let paths = self.inner.list_dir(&prefix)?;
+        Ok(!paths.is_empty())
     }
 
     /// Check if a file or directory exists
@@ -453,6 +690,252 @@ mod tests {
 
         // Starts small with auto-growth
         assert!(cart.inner().stats().total_blocks >= 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_entries_flat_structure() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("flat-cart");
+
+        let mut cart = Cartridge::create_at(&path, "flat-cart", "Flat Cartridge")?;
+
+        // Create flat structure (no nesting)
+        cart.write("/file1.txt", b"content1")?;
+        cart.write("/file2.txt", b"content2")?;
+        cart.write("/file3.txt", b"content3")?;
+        cart.flush()?;
+
+        let entries = cart.list_entries("/")?;
+
+        // Should have 3 files
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().all(|e| !e.is_dir));
+        assert!(entries.iter().all(|e| e.parent == "/"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_entries_nested_structure() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("nested-cart");
+
+        let mut cart = Cartridge::create_at(&path, "nested-cart", "Nested Cartridge")?;
+
+        // Create nested structure (3+ levels)
+        cart.write("/docs/guides/getting-started.md", b"# Getting Started")?;
+        cart.write("/docs/guides/advanced.md", b"# Advanced")?;
+        cart.write("/docs/api/reference.md", b"# API Reference")?;
+        cart.write("/src/main.rs", b"fn main() {}")?;
+        cart.flush()?;
+
+        let entries = cart.list_entries("/")?;
+
+        // Should have: /docs, /docs/guides, /docs/api, /src (4 dirs) + 4 files = 8 entries
+        assert_eq!(entries.len(), 8);
+
+        // Count directories and files
+        let dirs: Vec<_> = entries.iter().filter(|e| e.is_dir).collect();
+        let files: Vec<_> = entries.iter().filter(|e| !e.is_dir).collect();
+
+        assert_eq!(dirs.len(), 4);
+        assert_eq!(files.len(), 4);
+
+        // Verify directory names
+        let dir_names: Vec<_> = dirs.iter().map(|e| e.name.as_str()).collect();
+        assert!(dir_names.contains(&"docs"));
+        assert!(dir_names.contains(&"guides"));
+        assert!(dir_names.contains(&"api"));
+        assert!(dir_names.contains(&"src"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_entries_empty() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("empty-cart");
+
+        let cart = Cartridge::create_at(&path, "empty-cart", "Empty Cartridge")?;
+
+        let entries = cart.list_entries("/")?;
+
+        // Empty cartridge should return empty list (excluding internal .cartridge/)
+        assert_eq!(entries.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_children_root_level() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("children-cart");
+
+        let mut cart = Cartridge::create_at(&path, "children-cart", "Children Cartridge")?;
+
+        // Create structure with nested files
+        cart.write("/root1.txt", b"root file 1")?;
+        cart.write("/root2.txt", b"root file 2")?;
+        cart.write("/docs/nested.md", b"nested file")?;
+        cart.write("/docs/deep/very-nested.md", b"very nested")?;
+        cart.flush()?;
+
+        let children = cart.list_children("/")?;
+
+        // Should only have root-level entries: root1.txt, root2.txt, docs/
+        assert_eq!(children.len(), 3);
+        assert!(children.iter().all(|e| e.parent == "/"));
+
+        // Count root files and directories
+        let files: Vec<_> = children.iter().filter(|e| !e.is_dir).collect();
+        let dirs: Vec<_> = children.iter().filter(|e| e.is_dir).collect();
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].name, "docs");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_children_nested_directory() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("nested-children-cart");
+
+        let mut cart = Cartridge::create_at(&path, "nested-children-cart", "Nested Children")?;
+
+        cart.write("/docs/readme.md", b"readme")?;
+        cart.write("/docs/guides/tutorial.md", b"tutorial")?;
+        cart.write("/docs/api/reference.md", b"reference")?;
+        cart.flush()?;
+
+        let children = cart.list_children("/docs")?;
+
+        // Should have: readme.md, guides/, api/ (3 immediate children)
+        assert_eq!(children.len(), 3);
+        assert!(children.iter().all(|e| e.parent == "/docs"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_children_only_subdirectories() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("subdirs-cart");
+
+        let mut cart = Cartridge::create_at(&path, "subdirs-cart", "Subdirs")?;
+
+        // Create directories with no files at this level
+        cart.write("/parent/child1/file.txt", b"file1")?;
+        cart.write("/parent/child2/file.txt", b"file2")?;
+        cart.flush()?;
+
+        let children = cart.list_children("/parent")?;
+
+        // Should only have child1/ and child2/ directories
+        assert_eq!(children.len(), 2);
+        assert!(children.iter().all(|e| e.is_dir));
+        assert!(children.iter().all(|e| e.parent == "/parent"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_children_only_files() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("files-cart");
+
+        let mut cart = Cartridge::create_at(&path, "files-cart", "Files")?;
+
+        // Create directory with only files
+        cart.write("/data/file1.dat", b"data1")?;
+        cart.write("/data/file2.dat", b"data2")?;
+        cart.write("/data/file3.dat", b"data3")?;
+        cart.flush()?;
+
+        let children = cart.list_children("/data")?;
+
+        // Should only have 3 files
+        assert_eq!(children.len(), 3);
+        assert!(children.iter().all(|e| !e.is_dir));
+        assert!(children.iter().all(|e| e.parent == "/data"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_dir_known_directory() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("isdir-cart");
+
+        let mut cart = Cartridge::create_at(&path, "isdir-cart", "IsDir")?;
+
+        cart.write("/documents/report.txt", b"report")?;
+        cart.flush()?;
+
+        // "/documents" should be a directory
+        assert!(cart.is_dir("/documents")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_dir_known_file() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("isfile-cart");
+
+        let mut cart = Cartridge::create_at(&path, "isfile-cart", "IsFile")?;
+
+        cart.write("/documents/report.txt", b"report")?;
+        cart.flush()?;
+
+        // "/documents/report.txt" should NOT be a directory
+        assert!(!cart.is_dir("/documents/report.txt")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_dir_nonexistent() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("nonexistent-cart");
+
+        let cart = Cartridge::create_at(&path, "nonexistent-cart", "NonExistent")?;
+
+        // Non-existent path should not be a directory
+        assert!(!cart.is_dir("/does-not-exist")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_entry_metadata_fields() -> Result<()> {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("metadata-cart");
+
+        let mut cart = Cartridge::create_at(&path, "metadata-cart", "Metadata")?;
+
+        cart.write("/test.txt", b"hello world")?;
+        cart.flush()?;
+
+        let entries = cart.list_entries("/")?;
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+
+        // Verify basic fields
+        assert_eq!(entry.path, "/test.txt");
+        assert_eq!(entry.name, "test.txt");
+        assert_eq!(entry.parent, "/");
+        assert!(!entry.is_dir);
+
+        // Verify metadata fields are populated
+        assert!(entry.size.is_some());
+        assert_eq!(entry.size.unwrap(), 11); // "hello world" is 11 bytes
+        assert!(entry.created.is_some());
+        assert!(entry.modified.is_some());
 
         Ok(())
     }
