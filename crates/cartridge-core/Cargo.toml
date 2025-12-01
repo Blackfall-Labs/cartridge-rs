@@ -8,7 +8,7 @@ description = "High-performance mutable archive format with SQLite VFS support"
 
 [dependencies]
 # Engram integration (reuse existing crypto/compression)
-engram-rs = { git = "https://github.com/Manifest-Humanity/engram-core", branch = "engram-rs-migration" }
+engram-rs = { path = "E:/repos/blackfall-labs/engram-core" }
 
 # Core
 serde = { version = "1.0", features = ["derive"] }
@@ -49,8 +49,8 @@ aes-gcm = "0.10"
 rand = "0.8"
 
 # SQLite (rusqlite for high-level API, libsqlite3-sys for VFS FFI)
-rusqlite = { version = "0.31", features = ["bundled", "backup"] }
-libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 libc = "0.2"
 
 # I/O

@@ -12,7 +12,7 @@ readme = "README.md"
 cartridge-core = { path = "../cartridge-core" }
 
 # Engram integration
-engram-rs = { git = "https://github.com/Manifest-Humanity/engram-core", branch = "engram-rs-migration" }
+engram-rs = { path = "E:/repos/blackfall-labs/engram-core" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
