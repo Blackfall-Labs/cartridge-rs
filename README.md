@@ -1,135 +1,242 @@
 # Cartridge
 
-High-performance mutable archive format with SQLite VFS support and S3-compatible API.
+High-performance mutable container format with auto-growth, SQLite VFS support, and advanced features.
 
 ## Overview
 
-Cartridge is a production-ready storage system designed for high-performance file archiving with support for:
+Cartridge is a production-ready storage system designed for high-performance mutable containers with:
 
-- **Mutable archives** with in-place modifications
-- **SQLite VFS integration** for running databases directly inside archives
-- **S3-compatible HTTP API** for cloud-native workflows
-- **Advanced features**: compression, encryption, snapshots, IAM policies
-
-## Components
-
-This repository contains two main crates:
-
-### 📦 cartridge-core
-
-The core mutable archive format with SQLite VFS support.
-
-**Features:**
-- Fixed 4KB pages for optimal alignment
-- Hybrid allocator (bitmap + extent)
-- B-tree catalog for file metadata
-- ARC buffer pool (Adaptive Replacement Cache)
-- LZ4/Zstd compression (transparent)
-- AES-256-GCM encryption
-- IAM policies with wildcard matching
-- Copy-on-write snapshots
-- Engram freezing (mutable → immutable)
-
-**Performance:**
-- Read: 18 GiB/s (64KB blocks)
-- Write: 9 GiB/s (64KB blocks)
-- LZ4 Compression: 9.77 GiB/s
-- LZ4 Decompression: 38.12 GiB/s
-
-[Read more →](docs/CARTRIDGE_CORE_README.md)
-
-### 🌐 cartridge-s3
-
-S3-compatible HTTP API for Cartridge storage.
-
-**Features:**
-- Full S3 bucket operations (create, delete, list, head)
-- Full S3 object operations (put, get, delete, head, list, copy)
-- Multipart upload support (AWS CLI compatible)
-- Bulk delete (up to 1000 keys)
-- AWS Signature V4 authentication
-- Feature fuses (versioning, ACL, SSE modes)
-
-**AWS CLI Compatible:**
-```bash
-aws s3 --endpoint-url=http://localhost:9000 cp file.txt s3://my-bucket/
-```
-
-[Read cartridge-s3 docs →](docs/)
+- **Auto-growing containers** - Start at 12KB, grow automatically as needed
+- **Mutable storage** - In-place modifications without rebuilding
+- **SQLite VFS integration** - Run databases directly inside containers
+- **Advanced features** - Compression, encryption, snapshots, IAM policies
+- **Engram freezing** - Convert to immutable, cryptographically signed archives
 
 ## Quick Start
 
 ### Installation
 
-```bash
-git clone https://github.com/manifest-humanity/cartridge.git
-cd cartridge
-cargo build --release
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+cartridge-rs = { git = "https://github.com/manifest-humanity/cartridge" }
 ```
 
-### Using cartridge-core
+### Basic Usage
 
 ```rust
-use cartridge_core::Cartridge;
+use cartridge_rs::Cartridge;
 
-// Create a new archive
-let mut cart = Cartridge::create("data.cart")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create container - starts at 12KB, grows automatically!
+    let mut cart = Cartridge::create("my-data", "My Data Container")?;
 
-// Write files
-cart.write_file("documents/report.txt", b"Hello, World!")?;
+    // Write files (auto-creates directories)
+    cart.write("documents/report.txt", b"Hello, World!")?;
+    cart.write("config/settings.json", br#"{"version": "1.0"}"#)?;
 
-// Read files
-let content = cart.read_file("documents/report.txt")?;
+    // Read files
+    let content = cart.read("documents/report.txt")?;
+    println!("{}", String::from_utf8_lossy(&content));
 
-// Create snapshots
-let snapshot = cart.create_snapshot("backup-2025")?;
+    // List directory
+    let files = cart.list("documents")?;
+    for file in files {
+        println!("Found: {}", file);
+    }
 
-// Use as SQLite VFS
-let conn = Connection::open_with_flags(
-    "file:data.db?vfs=cartridge",
-    OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
-)?;
+    // Access metadata
+    println!("Container: {} ({})", cart.title()?, cart.slug()?);
+
+    Ok(())
+}
 ```
 
-### Running cartridge-s3 Server
+### Auto-Growth Example
+
+```rust
+// No capacity planning needed!
+let mut cart = Cartridge::create("my-data", "My Data")?;
+
+// Add 100KB file - container automatically grows
+let large_data = vec![0u8; 100_000];
+cart.write("large.bin", &large_data)?;
+
+// Container grew from 12KB to whatever was needed
+```
+
+### Advanced Configuration
+
+```rust
+use cartridge_rs::CartridgeBuilder;
+
+let cart = CartridgeBuilder::new()
+    .slug("my-data")
+    .title("My Data Container")
+    .path("/custom/path/my-data")  // Optional: custom location
+    .with_audit_logging()           // Optional: enable audit log
+    .build()?;
+```
+
+## Key Concepts
+
+### Slug vs Title
+
+- **Slug**: Kebab-case identifier used for filenames and registry keys (e.g., `"us-constitution"`)
+- **Title**: Human-readable display name (e.g., `"U.S. Constitution"`)
+
+```rust
+let cart = Cartridge::create("us-constitution", "U.S. Constitution")?;
+// Creates file: us-constitution.cart
+// Display name: U.S. Constitution
+```
+
+### Container vs Archive
+
+- **Container**: Mutable Cartridge instance (this crate)
+- **Archive**: Immutable Engram archive (created by freezing)
+
+```rust
+// Mutable container
+let mut cart = Cartridge::create("data", "My Data")?;
+cart.write("file.txt", b"mutable")?;
+
+// Freeze to immutable archive
+cart.inner_mut().freeze_to_engram("data.eng")?;
+```
+
+## Features
+
+### Core Features
+
+- **Fixed 4KB pages** - Optimal alignment for filesystems and databases
+- **Hybrid allocator** - Bitmap (small) + extent (large) for efficiency
+- **B-tree catalog** - Fast file metadata lookups
+- **ARC buffer pool** - Adaptive Replacement Cache for hot data
+- **Auto-growth** - Starts minimal (12KB), doubles on demand
+
+### Compression & Encryption
+
+```rust
+// Transparent LZ4 compression
+cart.inner_mut().enable_compression()?;
+
+// AES-256-GCM encryption
+cart.inner_mut().enable_encryption(key)?;
+```
+
+### Snapshots
+
+```rust
+// Create snapshot
+let snapshot_id = cart.inner_mut().create_snapshot("backup-2025")?;
+
+// Restore snapshot
+cart.inner_mut().restore_snapshot(snapshot_id)?;
+```
+
+### IAM Policies
+
+```rust
+use cartridge_rs::{Policy, Statement, Action, Effect};
+
+let policy = Policy::new("read-only", vec![
+    Statement {
+        effect: Effect::Allow,
+        actions: vec![Action::Read],
+        resources: vec!["documents/**".to_string()],
+    },
+    Statement {
+        effect: Effect::Deny,
+        actions: vec![Action::Write, Action::Delete],
+        resources: vec!["**".to_string()],
+    },
+]);
+
+cart.inner_mut().set_policy(policy);
+```
+
+### SQLite VFS
+
+```rust
+use rusqlite::{Connection, OpenFlags};
+
+// Register VFS
+cartridge_rs::register_vfs(cart)?;
+
+// Open database inside container
+let conn = Connection::open_with_flags(
+    "file:mydb.db?vfs=cartridge",
+    OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+)?;
+
+conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", [])?;
+```
+
+## Performance
+
+**Throughput** (64KB blocks):
+- Read: 18 GiB/s
+- Write: 9 GiB/s
+
+**Compression**:
+- LZ4 Compression: 9.77 GiB/s
+- LZ4 Decompression: 38.12 GiB/s
+
+**Auto-growth overhead**: < 1ms per doubling
+
+## Examples
+
+Run examples to see Cartridge in action:
 
 ```bash
-# Start the S3 server
-./target/release/cartridge-s3-server \
-    --bind 127.0.0.1:9000 \
-    --storage-path ./data
+# Basic usage
+cargo run --example basic
 
-# Use with AWS CLI
-aws s3 --endpoint-url=http://localhost:9000 mb s3://my-bucket
-aws s3 --endpoint-url=http://localhost:9000 cp file.txt s3://my-bucket/
+# Auto-growth demonstration
+cargo run --example auto_growth
+
+# Manifest and metadata
+cargo run --example manifest
+
+# VFS trait for generic code
+cargo run --example vfs_trait
+
+# Compression analysis with compressed_size field
+cargo run --example compression_analysis
 ```
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────┐
-│      cartridge-s3 (S3 API)         │
-│  ┌──────────────────────────────┐  │
-│  │ S3 Handler (hyper + s3s)     │  │
-│  └──────────┬───────────────────┘  │
-│             │                       │
-│  ┌──────────▼───────────────────┐  │
-│  │ CartridgeS3Backend           │  │
-│  └──────────┬───────────────────┘  │
-└─────────────┼───────────────────────┘
+│      High-Level API (lib.rs)       │
+│  • Cartridge::create()              │
+│  • Simple read/write/delete         │
+│  • CartridgeBuilder                 │
+└─────────────┬───────────────────────┘
               │
 ┌─────────────▼───────────────────────┐
-│      cartridge-core                 │
+│      Core Implementation            │
 │  ┌──────────────────────────────┐  │
-│  │ Cartridge API                │  │
-│  ├──────────────────────────────┤  │
 │  │ SQLite VFS                   │  │
+│  ├──────────────────────────────┤  │
+│  │ IAM Policy Engine            │  │
+│  ├──────────────────────────────┤  │
+│  │ Snapshot Manager             │  │
 │  ├──────────────────────────────┤  │
 │  │ B-tree Catalog               │  │
 │  ├──────────────────────────────┤  │
 │  │ Hybrid Allocator             │  │
+│  │  • Bitmap (small)            │  │
+│  │  • Extent (large)            │  │
 │  ├──────────────────────────────┤  │
 │  │ ARC Buffer Pool              │  │
+│  ├──────────────────────────────┤  │
+│  │ Compression (LZ4/Zstd)       │  │
+│  ├──────────────────────────────┤  │
+│  │ Encryption (AES-256-GCM)     │  │
 │  ├──────────────────────────────┤  │
 │  │ 4KB Page Layer               │  │
 │  └──────────────────────────────┘  │
@@ -139,85 +246,66 @@ aws s3 --endpoint-url=http://localhost:9000 cp file.txt s3://my-bucket/
 ## Testing
 
 ```bash
-# Test all components
+# Run all tests
 cargo test
 
-# Test specific crate
-cargo test -p cartridge-core
-cargo test -p cartridge-s3
+# Run with output
+cargo test -- --nocapture
 
 # Run benchmarks
-cargo bench -p cartridge-core
+cargo bench
 
 # With logging
 RUST_LOG=debug cargo test
 ```
 
-**Test Coverage:**
-- **cartridge-core**: 192/193 tests passing (99.5%)
-- **cartridge-s3**: 32/32 tests passing (100%)
+**Test Coverage**: 232 tests passing
 
 ## Documentation
 
-All documentation is located in the [`docs/`](docs/) directory:
+- [LIBRARY_USAGE.md](LIBRARY_USAGE.md) - Comprehensive library usage guide
+- [DYNAMIC_PLAN.md](DYNAMIC_PLAN.md) - Auto-growth implementation plan
+- [DYNAMIC_PLAN_STATUS.md](DYNAMIC_PLAN_STATUS.md) - Implementation status
 
-**Core Documentation:**
-- [Cartridge Core README](docs/CARTRIDGE_CORE_README.md) - Complete user guide
-- [Architecture](docs/ARCHITECTURE.md) - Deep technical architecture
-- [Specification](docs/SPECIFICATION.md) - Binary format specification v0.1
-- [Performance Benchmarks](docs/performance.md) - Comprehensive benchmark results
-- [Executive Summary](docs/CARTRIDGE_EXECUTIVE_SUMMARY.md) - Production readiness report
+## Ecosystem
 
-**S3 Documentation:**
-- [Cartridge S3 README](docs/CARTRIDGE_S3_README.md) - Complete S3 user guide
-- [S3 Implementation Plan](docs/S3_PLAN.md) - S3 integration planning
-- [S3 Status](docs/S3_STATUS.md) - S3 implementation status
-- [S3 v0.2 Feature Fuses](docs/CARTRIDGE_S3_0.2_PLAN.md) - Version 0.2 feature plan
+Cartridge is part of the Blackfall Labs technology stack:
 
-**Planning & Research:**
-- [Implementation Plan](docs/PLAN_CARTRIDGE_IMPLEMENTATION.md) - Complete implementation roadmap
-- [Format Research](docs/Cartridge%20Format%20Research.pdf) - Original research document
+- **[SAM](https://github.com/manifest-humanity/sam)** - Offline AI assistant for crisis centers
+- **[CML](https://github.com/manifest-humanity/content-markup-language)** - Semantic content format
+- **[Engram](https://github.com/manifest-humanity/engram)** - Signed archives with Git integration
+- **[Byte Punch](https://github.com/manifest-humanity/byte-punch)** - Profile-aware compression
+- **[Research Engine](../research-engine)** - Tauri desktop research application
 
 ## Status
 
-**Production Ready** - Both components are stable and ready for production use:
+**Production Ready** - v0.2.0
 
-- ✅ **cartridge-core v0.1.0** - Phase 7 Complete
-- ✅ **cartridge-s3 v0.2.0** - Feature Fuses Complete
-
-## Dependencies
-
-- **Engram**: Git-based signed archives ([manifest-humanity/engram](https://github.com/manifest-humanity/engram))
-- Rust 2021 edition
-- See individual crate `Cargo.toml` files for complete dependency lists
-
-## License
-
-Licensed under either of:
-
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-
-at your option.
+- ✅ Auto-growth containers
+- ✅ Slug/title manifest system
+- ✅ SQLite VFS integration
+- ✅ Compression & encryption
+- ✅ Snapshots & IAM policies
+- ✅ Engram freezing
 
 ## Contributing
 
 Contributions are welcome! Please ensure:
 
-1. All tests pass (`cargo test`)
-2. Code is formatted (`cargo fmt`)
-3. Clippy is happy (`cargo clippy`)
+1. All tests pass: `cargo test`
+2. Code is formatted: `cargo fmt`
+3. Clippy is happy: `cargo clippy -- -D warnings`
 4. Documentation is updated
 
-## Ecosystem
+## License
 
-Cartridge is part of the Manifest Humanity technology stack:
+Licensed under either of:
 
-- [SAM (Societal Advisory Module)](https://github.com/manifest-humanity/sam) - Offline AI assistant
-- [CML (Content Markup Language)](https://github.com/manifest-humanity/content-markup-language) - Semantic content format
-- [Engram](https://github.com/manifest-humanity/engram) - Signed archives with Git integration
-- [Byte Punch](https://github.com/manifest-humanity/byte-punch) - Profile-aware compression
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.
 
 ---
 
-**Cartridge**: High-performance archiving for the modern age.
+**Cartridge**: Mutable containers that grow with your data.

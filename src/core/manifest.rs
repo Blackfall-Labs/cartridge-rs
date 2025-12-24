@@ -48,7 +48,10 @@ pub struct Manifest {
     /// Must be valid kebab-case: lowercase, numbers, hyphens only.
     ///
     /// Example: "us-const"
-    #[serde(serialize_with = "serialize_slug", deserialize_with = "deserialize_slug")]
+    #[serde(
+        serialize_with = "serialize_slug",
+        deserialize_with = "deserialize_slug"
+    )]
     pub slug: ContainerSlug,
 
     /// Container title (human-readable display name)
@@ -221,11 +224,7 @@ impl Manifest {
     }
 
     /// Add custom metadata
-    pub fn add_metadata(
-        mut self,
-        key: impl Into<String>,
-        value: serde_json::Value,
-    ) -> Self {
+    pub fn add_metadata(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.metadata.insert(key.into(), value);
         self
     }
@@ -254,11 +253,7 @@ mod tests {
 
     #[test]
     fn test_create_manifest() -> Result<()> {
-        let manifest = Manifest::new(
-            "my-container",
-            "My Container",
-            Version::new(1, 0, 0),
-        )?;
+        let manifest = Manifest::new("my-container", "My Container", Version::new(1, 0, 0))?;
 
         assert_eq!(manifest.slug.as_str(), "my-container");
         assert_eq!(manifest.title, "My Container");
@@ -269,11 +264,7 @@ mod tests {
 
     #[test]
     fn test_slug_vs_title() -> Result<()> {
-        let manifest = Manifest::new(
-            "us-const",
-            "U.S. Constitution",
-            Version::new(0, 1, 0),
-        )?;
+        let manifest = Manifest::new("us-const", "U.S. Constitution", Version::new(0, 1, 0))?;
 
         // Slug is kebab-case (for filenames, registry)
         assert_eq!(manifest.slug.as_str(), "us-const");
@@ -286,20 +277,19 @@ mod tests {
 
     #[test]
     fn test_builder_pattern() -> Result<()> {
-        let manifest = Manifest::new(
-            "test-container",
-            "Test Container",
-            Version::new(1, 0, 0),
-        )?
-        .with_description("A test container")
-        .with_author("Test Author <test@example.com>")
-        .with_license("MIT")
-        .with_repository("https://github.com/test/repo")
-        .add_capability("read:public/*")
-        .add_dependency("other-container", "^1.0.0")?;
+        let manifest = Manifest::new("test-container", "Test Container", Version::new(1, 0, 0))?
+            .with_description("A test container")
+            .with_author("Test Author <test@example.com>")
+            .with_license("MIT")
+            .with_repository("https://github.com/test/repo")
+            .add_capability("read:public/*")
+            .add_dependency("other-container", "^1.0.0")?;
 
         assert_eq!(manifest.description, Some("A test container".to_string()));
-        assert_eq!(manifest.author, Some("Test Author <test@example.com>".to_string()));
+        assert_eq!(
+            manifest.author,
+            Some("Test Author <test@example.com>".to_string())
+        );
         assert!(manifest.dependencies.contains_key("other-container"));
 
         Ok(())
@@ -307,11 +297,7 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize() -> Result<()> {
-        let manifest = Manifest::new(
-            "my-container",
-            "My Container",
-            Version::new(1, 2, 3),
-        )?;
+        let manifest = Manifest::new("my-container", "My Container", Version::new(1, 2, 3))?;
 
         let json = serde_json::to_string_pretty(&manifest).unwrap();
         let deserialized: Manifest = serde_json::from_str(&json).unwrap();
@@ -326,22 +312,14 @@ mod tests {
     #[test]
     fn test_invalid_slug() {
         // Invalid slug (uppercase)
-        let result = Manifest::new(
-            "My-Container",
-            "My Container",
-            Version::new(1, 0, 0),
-        );
+        let result = Manifest::new("My-Container", "My Container", Version::new(1, 0, 0));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_dependencies() -> Result<()> {
-        let manifest = Manifest::new(
-            "test",
-            "Test",
-            Version::new(1, 0, 0),
-        )?
-        .add_dependency("valid-dep", "^1.0.0")?;
+        let manifest = Manifest::new("test", "Test", Version::new(1, 0, 0))?
+            .add_dependency("valid-dep", "^1.0.0")?;
 
         assert!(manifest.validate().is_ok());
 

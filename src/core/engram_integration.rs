@@ -10,8 +10,8 @@
 //!   + metadata         →           →    + access control preserved
 //! ```
 
+use super::cartridge::Cartridge;
 use crate::error::{CartridgeError, Result};
-use crate::Cartridge;
 use engram_rs::{ArchiveWriter, CompressionMethod};
 use serde_json::json;
 use std::path::Path;

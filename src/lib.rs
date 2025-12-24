@@ -50,21 +50,31 @@
 //! # }
 //! ```
 
+// Core implementation (merged from cartridge-core)
+pub mod core;
+
+// Re-export core modules internally so crate:: paths in core still work
+#[allow(unused_imports)]
+pub(crate) use core::{
+    allocator, audit, buffer_pool, catalog, compression, encryption, engram_integration, error,
+    header, iam, io, manifest, page, snapshot, validation, vfs,
+};
+
 // Re-export core types that users need
-pub use cartridge_core::{
-    error::{CartridgeError, Result},
+pub use crate::core::{
     catalog::{FileMetadata, FileType},
-    iam::{Action, Policy, PolicyEngine, Statement, Effect},
-    snapshot::{SnapshotManager, SnapshotMetadata},
-    header::{PAGE_SIZE, S3FeatureFuses, S3AclMode, S3SseMode, S3VersioningMode},
+    error::{CartridgeError, Result},
+    header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode, PAGE_SIZE},
+    iam::{Action, Effect, Policy, PolicyEngine, Statement},
     manifest::Manifest,
+    snapshot::{SnapshotManager, SnapshotMetadata},
     validation::ContainerSlug,
 };
 
-use cartridge_core::Cartridge as CoreCartridge;
-use serde::{Serialize, Deserialize};
-use std::path::Path;
+use crate::core::Cartridge as CoreCartridge;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::Path;
 use tracing::{debug, info};
 
 /// Rich metadata about a file or directory in the archive
@@ -120,6 +130,11 @@ pub struct Entry {
 
     /// File type (File, Directory, or Symlink)
     pub file_type: FileType,
+
+    /// Compressed size on disk in bytes (None for directories or if unavailable)
+    /// This is the actual space used in the container, which may be less than
+    /// `size` when compression is enabled.
+    pub compressed_size: Option<u64>,
 }
 
 /// Convert flat paths to Entry objects with rich metadata
@@ -133,8 +148,10 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
     // Process each file path
     for path in paths {
         // Skip internal .cartridge directory (with or without leading slash)
-        if path.starts_with(".cartridge/") || path == ".cartridge"
-            || path.starts_with("/.cartridge") {
+        if path.starts_with(".cartridge/")
+            || path == ".cartridge"
+            || path.starts_with("/.cartridge")
+        {
             continue;
         }
         // Extract name and parent from path
@@ -163,14 +180,24 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
             created: metadata.as_ref().map(|m| m.created_at),
             modified: metadata.as_ref().map(|m| m.modified_at),
             content_type: metadata.as_ref().and_then(|m| m.content_type.clone()),
-            file_type: metadata.as_ref().map(|m| m.file_type).unwrap_or(FileType::File),
+            file_type: metadata
+                .as_ref()
+                .map(|m| m.file_type)
+                .unwrap_or(FileType::File),
+            compressed_size: metadata
+                .as_ref()
+                .map(|m| (m.blocks.len() as u64) * PAGE_SIZE as u64),
         });
 
         // Add parent directories (if not already seen)
         let mut current_parent = parent.as_str();
         while !current_parent.is_empty() && current_parent != "/" {
             if seen_dirs.insert(current_parent.to_string()) {
-                let parent_name = current_parent.rsplit('/').next().unwrap_or(current_parent).to_string();
+                let parent_name = current_parent
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(current_parent)
+                    .to_string();
                 let grandparent = if let Some(idx) = current_parent.rfind('/') {
                     if idx == 0 {
                         "/".to_string()
@@ -191,6 +218,7 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
                     modified: None,
                     content_type: None,
                     file_type: FileType::Directory,
+                    compressed_size: None,
                 });
             }
 
@@ -204,12 +232,10 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
     }
 
     // Sort: directories first, then alphabetically by name
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.cmp(&b.name),
     });
 
     Ok(entries)
@@ -276,7 +302,12 @@ impl Cartridge {
     /// # Ok::<(), cartridge_rs::CartridgeError>(())
     /// ```
     pub fn create_at<P: AsRef<Path>>(path: P, slug: &str, title: &str) -> Result<Self> {
-        info!("Creating cartridge at {:?} with slug '{}', title '{}'", path.as_ref(), slug, title);
+        info!(
+            "Creating cartridge at {:?} with slug '{}', title '{}'",
+            path.as_ref(),
+            slug,
+            title
+        );
         let inner = CoreCartridge::create_at(path, slug, title)?;
         Ok(Cartridge { inner })
     }
@@ -524,6 +555,68 @@ impl Cartridge {
         self.inner.flush()
     }
 
+    /// Get the container slug
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Data")?;
+    /// assert_eq!(cart.slug()?, "my-data");
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn slug(&self) -> Result<String> {
+        self.inner.slug()
+    }
+
+    /// Get the container title
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Container")?;
+    /// assert_eq!(cart.title()?, "My Container");
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn title(&self) -> Result<String> {
+        self.inner.title()
+    }
+
+    /// Read the container manifest
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let cart = Cartridge::create("my-data", "My Container")?;
+    /// let manifest = cart.read_manifest()?;
+    /// println!("Version: {}", manifest.version);
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn read_manifest(&self) -> Result<Manifest> {
+        self.inner.read_manifest()
+    }
+
+    /// Update the container manifest
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # let mut cart = Cartridge::create("my-data", "My Container")?;
+    /// cart.update_manifest(|manifest| {
+    ///     manifest.description = Some("Updated description".to_string());
+    /// })?;
+    /// # Ok::<(), cartridge_rs::CartridgeError>(())
+    /// ```
+    pub fn update_manifest<F>(&mut self, f: F) -> Result<()>
+    where
+        F: FnOnce(&mut Manifest),
+    {
+        self.inner.update_manifest(f)
+    }
+
     /// Get access to the underlying core Cartridge for advanced operations
     ///
     /// Use this when you need features not exposed by the high-level API:
@@ -639,7 +732,7 @@ impl CartridgeBuilder {
         };
 
         if self.enable_audit {
-            use cartridge_core::audit::AuditLogger;
+            use crate::core::audit::AuditLogger;
             use std::sync::Arc;
             use std::time::Duration;
 
@@ -658,6 +751,112 @@ impl Default for CartridgeBuilder {
     }
 }
 
+/// Virtual Filesystem trait for unified storage interface
+///
+/// Provides a common interface that can be implemented by different storage backends:
+/// - Cartridge (mutable containers)
+/// - Engram (immutable archives)
+/// - ZipVfs, TarVfs (other archive formats)
+/// - S3Vfs, LocalVfs (remote/local filesystems)
+///
+/// This allows applications to work with any storage backend using the same API.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use cartridge_rs::{Cartridge, Vfs};
+///
+/// fn process_storage<V: Vfs>(vfs: &V, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+///     // Works with any VFS implementation
+///     let entries = vfs.list_entries(path)?;
+///     for entry in entries {
+///         if !entry.is_dir {
+///             let content = vfs.read(&entry.path)?;
+///             println!("File: {} ({} bytes)", entry.name, content.len());
+///         }
+///     }
+///     Ok(())
+/// }
+///
+/// // Use with Cartridge
+/// let cart = Cartridge::create("my-data", "My Data")?;
+/// process_storage(&cart, "documents")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub trait Vfs {
+    /// List all entries under a given prefix with rich metadata
+    ///
+    /// Returns Entry objects with parsed path components, file metadata,
+    /// and inferred directory information.
+    fn list_entries(&self, prefix: &str) -> Result<Vec<Entry>>;
+
+    /// List immediate children of a directory (non-recursive)
+    ///
+    /// Returns only entries whose parent matches the given path,
+    /// providing a directory-style listing view.
+    fn list_children(&self, parent: &str) -> Result<Vec<Entry>>;
+
+    /// Read the contents of a file
+    ///
+    /// Returns the full file contents as a byte vector.
+    fn read(&self, path: &str) -> Result<Vec<u8>>;
+
+    /// Write or update a file
+    ///
+    /// Creates the file if it doesn't exist, updates it if it does.
+    /// Automatically creates parent directories as needed.
+    fn write(&mut self, path: &str, data: &[u8]) -> Result<()>;
+
+    /// Delete a file or directory
+    ///
+    /// For directories, this typically deletes all contents recursively.
+    fn delete(&mut self, path: &str) -> Result<()>;
+
+    /// Check if a path exists
+    fn exists(&self, path: &str) -> Result<bool>;
+
+    /// Check if a path is a directory
+    fn is_dir(&self, path: &str) -> Result<bool>;
+
+    /// Get metadata for a path
+    fn metadata(&self, path: &str) -> Result<FileMetadata>;
+}
+
+/// Implement VFS trait for Cartridge
+impl Vfs for Cartridge {
+    fn list_entries(&self, prefix: &str) -> Result<Vec<Entry>> {
+        self.list_entries(prefix)
+    }
+
+    fn list_children(&self, parent: &str) -> Result<Vec<Entry>> {
+        self.list_children(parent)
+    }
+
+    fn read(&self, path: &str) -> Result<Vec<u8>> {
+        self.read(path)
+    }
+
+    fn write(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        self.write(path, data)
+    }
+
+    fn delete(&mut self, path: &str) -> Result<()> {
+        self.delete(path)
+    }
+
+    fn exists(&self, path: &str) -> Result<bool> {
+        self.exists(path)
+    }
+
+    fn is_dir(&self, path: &str) -> Result<bool> {
+        self.is_dir(path)
+    }
+
+    fn metadata(&self, path: &str) -> Result<FileMetadata> {
+        self.metadata(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,7 +868,7 @@ mod tests {
 
         let mut cart = Cartridge::create_at(&path, "test-cart", "Test Cartridge")?;
         cart.write("test.txt", b"hello")?;
-        cart.flush()?;  // Ensure write is persisted
+        cart.flush()?; // Ensure write is persisted
 
         let content = cart.read("test.txt")?;
         assert_eq!(content, b"hello");

@@ -3,8 +3,8 @@
 //! Implements the sqlite3_vfs interface to provide filesystem operations
 //! backed by Cartridge archive storage.
 
+use super::super::cartridge::Cartridge;
 use crate::error::{CartridgeError, Result};
-use crate::Cartridge;
 use libsqlite3_sys as ffi;
 use parking_lot::Mutex;
 use std::ffi::{CStr, CString};

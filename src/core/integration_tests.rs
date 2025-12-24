@@ -9,13 +9,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::Cartridge;
-    use crate::compression::{CompressionConfig, CompressionMethod};
-    use crate::encryption::EncryptionConfig;
-    use crate::engram_integration::EngramFreezer;
-    use crate::header::Header;
-    use crate::iam::{Action, Effect, Policy, Statement};
-    use crate::snapshot::SnapshotManager;
+    use crate::core::cartridge::Cartridge;
+    use crate::core::compression::{CompressionConfig, CompressionMethod};
+    use crate::core::encryption::EncryptionConfig;
+    use crate::core::engram_integration::EngramFreezer;
+    use crate::core::header::Header;
+    use crate::core::iam::{Action, Effect, Policy, Statement};
+    use crate::core::snapshot::SnapshotManager;
     use engram_rs::ArchiveReader;
     use tempfile::TempDir;
 

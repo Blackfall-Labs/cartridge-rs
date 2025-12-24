@@ -326,37 +326,46 @@ fn list_tree(cart: &Cartridge, path: &str) {
 
 ---
 
-## Future Enhancements (v2+)
+## ✅ Future Enhancements (IMPLEMENTED v0.2.0)
 
-Once Entry model is stable, consider adding:
-
-### Metadata Expansion
+### ✅ Metadata Expansion (COMPLETE)
 ```rust
 pub struct Entry {
     // ... existing fields
-    pub size: Option<u64>,           // File size in bytes
-    pub modified: Option<SystemTime>, // Last modified timestamp
-    pub content_type: Option<String>, // MIME type
-    pub compressed_size: Option<u64>, // Size on disk (if compressed)
+    pub size: Option<u64>,           // ✅ File size in bytes
+    pub created: Option<u64>,        // ✅ Creation timestamp
+    pub modified: Option<u64>,       // ✅ Last modified timestamp
+    pub content_type: Option<String>, // ✅ MIME type
+    pub file_type: FileType,         // ✅ File/Directory/Symlink
+    pub compressed_size: Option<u64>, // ✅ Size on disk (NEW in v0.2.0)
 }
 ```
 
-### Virtual Filesystem Trait
+### ✅ Virtual Filesystem Trait (COMPLETE)
 ```rust
 pub trait Vfs {
     fn list_entries(&self, prefix: &str) -> Result<Vec<Entry>>;
+    fn list_children(&self, parent: &str) -> Result<Vec<Entry>>;
     fn read(&self, path: &str) -> Result<Vec<u8>>;
-    fn write(&self, path: &str, data: &[u8]) -> Result<()>;
-    fn delete(&self, path: &str) -> Result<()>;
+    fn write(&mut self, path: &str, data: &[u8]) -> Result<()>;
+    fn delete(&mut self, path: &str) -> Result<()>;
+    fn exists(&self, path: &str) -> Result<bool>;
+    fn is_dir(&self, path: &str) -> Result<bool>;
+    fn metadata(&self, path: &str) -> Result<FileMetadata>;
 }
 
 impl Vfs for Cartridge { ... }
 ```
 
-This would allow:
-- Mock VFS for testing
-- Other backends (ZipVfs, TarVfs, S3Vfs)
-- Unified interface across storage types
+**Now enables:**
+- ✅ Mock VFS for testing
+- ✅ Generic code that works with any backend
+- ✅ Future backends (ZipVfs, TarVfs, S3Vfs, EngramVfs)
+- ✅ Unified interface across storage types
+
+**See examples:**
+- `cargo run --example vfs_trait` - Generic VFS code
+- `cargo run --example compression_analysis` - compressed_size usage
 
 ---
 

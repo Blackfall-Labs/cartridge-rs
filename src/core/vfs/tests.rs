@@ -1,7 +1,7 @@
 //! Integration tests for the Cartridge SQLite VFS
 
+use crate::core::cartridge::Cartridge;
 use crate::vfs::{register_vfs, unregister_vfs, VFS_NAME};
-use crate::Cartridge;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::sync::Arc;
@@ -13,7 +13,9 @@ fn test_vfs_basic_operations() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
 
     // Register the VFS
     register_vfs(Arc::clone(&cartridge)).unwrap();
@@ -41,7 +43,9 @@ fn test_vfs_create_table() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
     register_vfs(Arc::clone(&cartridge)).unwrap();
 
     {
@@ -68,7 +72,9 @@ fn test_vfs_registration() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
 
     // Register
     register_vfs(Arc::clone(&cartridge)).unwrap();
@@ -86,7 +92,9 @@ fn test_vfs_full_sqlite_integration() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
     register_vfs(Arc::clone(&cartridge)).unwrap();
 
     // Open database with our custom VFS
@@ -196,7 +204,9 @@ fn test_vfs_persistence_across_connections() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("persist.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
     register_vfs(Arc::clone(&cartridge)).unwrap();
 
     let db_uri = format!("file:persist.db?vfs={}", VFS_NAME);
@@ -267,7 +277,9 @@ fn test_vfs_transactions() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("txn.cart");
 
-    let cartridge = Arc::new(Mutex::new(Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap()));
+    let cartridge = Arc::new(Mutex::new(
+        Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
+    ));
     register_vfs(Arc::clone(&cartridge)).unwrap();
 
     let db_uri = format!("file:txn.db?vfs={}", VFS_NAME);

@@ -111,10 +111,7 @@ impl Cartridge {
     /// // Creates "my-container.cart" in current directory
     /// let cart = Cartridge::create("my-container", "My Container")?;
     /// ```
-    pub fn create(
-        slug: &str,
-        title: &str,
-    ) -> Result<Self> {
+    pub fn create(slug: &str, title: &str) -> Result<Self> {
         // Validate slug and create path from it
         let slug_validated = validation::ContainerSlug::new(slug)?;
         let path = std::path::PathBuf::from(slug_validated.as_str());
@@ -183,11 +180,7 @@ impl Cartridge {
     /// // Creates "/data/my-container.cart"
     /// let cart = Cartridge::create_at("/data/my-container", "my-container", "My Container")?;
     /// ```
-    pub fn create_at<P: AsRef<Path>>(
-        path: P,
-        slug: &str,
-        title: &str,
-    ) -> Result<Self> {
+    pub fn create_at<P: AsRef<Path>>(path: P, slug: &str, title: &str) -> Result<Self> {
         // Validate slug
         let _slug_validated = validation::ContainerSlug::new(slug)?;
         let normalized_path = validation::normalize_container_path(path.as_ref())?;
@@ -1375,10 +1368,7 @@ mod tests {
 
         // Verify update persisted
         let updated = cart.read_manifest().unwrap();
-        assert_eq!(
-            updated.description,
-            Some("Updated description".to_string())
-        );
+        assert_eq!(updated.description, Some("Updated description".to_string()));
     }
 
     #[test]

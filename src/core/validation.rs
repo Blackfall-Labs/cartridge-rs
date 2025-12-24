@@ -73,31 +73,30 @@ impl ContainerSlug {
         // Length check
         if slug.is_empty() {
             return Err(CartridgeError::InvalidContainerSlug(
-                "slug cannot be empty".to_string()
+                "slug cannot be empty".to_string(),
             ));
         }
 
         if slug.len() > Self::MAX_LENGTH {
-            return Err(CartridgeError::InvalidContainerSlug(
-                format!("slug too long (max {} characters)", Self::MAX_LENGTH)
-            ));
+            return Err(CartridgeError::InvalidContainerSlug(format!(
+                "slug too long (max {} characters)",
+                Self::MAX_LENGTH
+            )));
         }
 
         // Pattern check (kebab-case)
         let re = Regex::new(Self::PATTERN).unwrap();
         if !re.is_match(slug) {
-            return Err(CartridgeError::InvalidContainerSlug(
-                format!(
-                    "slug '{}' must be kebab-case: lowercase letters, numbers, and hyphens only",
-                    slug
-                )
-            ));
+            return Err(CartridgeError::InvalidContainerSlug(format!(
+                "slug '{}' must be kebab-case: lowercase letters, numbers, and hyphens only",
+                slug
+            )));
         }
 
         // No consecutive hyphens
         if slug.contains("--") {
             return Err(CartridgeError::InvalidContainerSlug(
-                "slug cannot contain consecutive hyphens".to_string()
+                "slug cannot contain consecutive hyphens".to_string(),
             ));
         }
 
