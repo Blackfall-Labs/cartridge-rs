@@ -1,6 +1,6 @@
 [package]
 name = "cartridge-s3"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Blackfall Labs"]
 description = "S3-compatible HTTP API for Cartridge storage with ACL and SSE metadata support"
@@ -29,7 +29,7 @@ exclude = [
 ]
 
 [dependencies]
-cartridge = { version = "0.2.0", package = "cartridge-rs" }
+cartridge = { version = "0.2.3", package = "cartridge-rs" }
 
 # S3 implementation (updated to latest version)
 s3s = "0.12.0-rc.3"

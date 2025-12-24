@@ -711,9 +711,9 @@ dependencies = [
 
 [[package]]
 name = "cartridge-rs"
-version = "0.2.0"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6bbb4aa14c20f865e5906b3691ba8b29e0f94834b4ecdc3514dfb2e08c4276"
+checksum = "8c515b7f792208a29fc9b4e51fb46f246c8ac5e9d5efe1309552a99ae80581e5"
 dependencies = [
  "aes-gcm",
  "ahash",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "cartridge-s3"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",

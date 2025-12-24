@@ -35,7 +35,7 @@ impl VersioningManager {
         let cart = self.cartridge.read();
 
         // Check if object exists
-        let exists = cart.read_file(key).is_ok();
+        let exists = cart.read(key).is_ok();
         if !exists {
             debug!("Object {} does not exist, skipping version creation", key);
             return Ok(None);
@@ -72,7 +72,7 @@ impl VersioningManager {
         let mut cart = self.cartridge.write();
 
         // Save current state
-        let original_data = cart.read_file(key).ok();
+        let original_data = cart.read(key).ok();
 
         // Restore from snapshot
         cart.restore_snapshot(snapshot_id, &self.snapshot_dir)
@@ -82,13 +82,13 @@ impl VersioningManager {
 
         // Read versioned object
         let versioned_data = cart
-            .read_file(key)
+            .read(key)
             .map_err(|_| S3Error::NoSuchKey(format!("{}?versionId={}", key, version_id)))?;
 
         // Restore original state
         if let Some(data) = original_data {
-            let _ = cart.delete_file(key);
-            cart.create_file(key, &data).map_err(|e| {
+            let _ = cart.delete(key);
+            cart.write(key, &data).map_err(|e| {
                 S3Error::Internal(format!("Failed to restore original state: {}", e))
             })?;
         }
@@ -100,7 +100,7 @@ impl VersioningManager {
     ///
     /// Returns (key, version_id) pairs for all snapshots containing matching objects.
     pub fn list_versions(&self, prefix: &str) -> S3Result<Vec<(String, VersionId)>> {
-        use cartridge::snapshot::SnapshotManager;
+        use cartridge::SnapshotManager;
 
         let manager = SnapshotManager::new(&self.snapshot_dir)
             .map_err(|e| S3Error::Internal(format!("Failed to open snapshot manager: {}", e)))?;
@@ -138,7 +138,7 @@ impl VersioningManager {
     ///
     /// Deletes the snapshot corresponding to the version ID.
     pub fn delete_version(&self, key: &str, version_id: &VersionId) -> S3Result<()> {
-        use cartridge::snapshot::SnapshotManager;
+        use cartridge::SnapshotManager;
 
         let snapshot_id = self.parse_version_id(version_id)?;
 
@@ -187,7 +187,7 @@ mod tests {
         let snapshot_dir = TempDir::new().unwrap();
 
         let cart_path = cart_dir.path().join("test.cart");
-        let cart = Cartridge::create(&cart_path, 1000).unwrap();
+        let cart = Cartridge::create_at(&cart_path, "test-cartridge", "Test Cartridge").unwrap();
 
         (Arc::new(RwLock::new(cart)), cart_dir, snapshot_dir)
     }
@@ -219,7 +219,7 @@ mod tests {
         {
             let mut c = cart.write();
             c.create_dir("/bucket").unwrap();
-            c.create_file("/bucket/file.txt", b"version 1").unwrap();
+            c.write("/bucket/file.txt", b"version 1").unwrap();
         }
 
         let manager = VersioningManager::new(cart.clone(), snapshot_dir.path());
@@ -268,7 +268,7 @@ mod tests {
         {
             let mut c = cart.write();
             c.create_dir("/bucket").unwrap();
-            c.create_file("/bucket/doc.txt", b"version 1").unwrap();
+            c.write("/bucket/doc.txt", b"version 1").unwrap();
         }
 
         let manager = VersioningManager::new(cart.clone(), snapshot_dir.path());
@@ -283,8 +283,8 @@ mod tests {
         // Overwrite with version 2
         {
             let mut c = cart.write();
-            let _ = c.delete_file("/bucket/doc.txt");
-            c.create_file("/bucket/doc.txt", b"version 2").unwrap();
+            let _ = c.delete("/bucket/doc.txt");
+            c.write("/bucket/doc.txt", b"version 2").unwrap();
         }
 
         // Create second version

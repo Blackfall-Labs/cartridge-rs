@@ -2,7 +2,7 @@
 //!
 //! S3-compatible HTTP server backed by Cartridge storage
 
-use cartridge::header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
+use cartridge::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
 use cartridge::Cartridge;
 use cartridge_s3::CartridgeS3Backend;
 use clap::Parser;
@@ -144,12 +144,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         cart
     } else {
-        let blocks = args.blocks.ok_or("--blocks required for new cartridge")?;
-        info!(
-            "Creating new cartridge: {:?} ({} blocks)",
-            args.cartridge_path, blocks
-        );
-        let mut cart = Cartridge::create(&args.cartridge_path, blocks)?;
+        info!("Creating new cartridge: {:?}", args.cartridge_path);
+
+        // Extract slug from filename (remove .cart extension if present)
+        let filename = args.cartridge_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("cartridge-s3-data");
+        let slug = filename.to_string();
+        let title = format!("Cartridge S3 Storage: {}", slug);
+
+        let mut cart = Cartridge::create_at(&args.cartridge_path, &slug, &title)?;
 
         // Apply S3 fuses to new cartridge
         let fuses = S3FeatureFuses {

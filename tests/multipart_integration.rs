@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// Helper to create a backend for testing
 fn create_backend() -> CartridgeS3Backend {
-    let cartridge = Cartridge::new(10000);
+    let cartridge = Cartridge::create("test-cart", "Test Cartridge").unwrap();
     let cart_arc = Arc::new(RwLock::new(cartridge));
     CartridgeS3Backend::new(cart_arc)
 }

@@ -2,7 +2,7 @@
 //!
 //! Tests ACL, SSE, and versioning features with different fuse modes.
 
-use cartridge::header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
+use cartridge::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode};
 use cartridge::Cartridge;
 use cartridge_s3::{CartridgeS3Backend, S3Acl, S3Grant, S3Permission, SseHeaders};
 use parking_lot::RwLock;
@@ -14,7 +14,7 @@ fn create_test_backend(fuses: S3FeatureFuses) -> (CartridgeS3Backend, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let mut cart = Cartridge::create(&cart_path, 1000).unwrap();
+    let mut cart = Cartridge::create_at(&cart_path, "test-cartridge", "Test Cartridge").unwrap();
 
     // Set S3 fuses in header
     cart.header_mut().set_s3_fuses(fuses);
@@ -328,7 +328,7 @@ fn test_backward_compatibility() {
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
-    let cart = Cartridge::create(&cart_path, 1000).unwrap();
+    let cart = Cartridge::create_at(&cart_path, "test-cartridge", "Test Cartridge").unwrap();
     // Don't set fuses - reserved field remains zeros
 
     let cart_arc = Arc::new(RwLock::new(cart));

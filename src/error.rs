@@ -10,7 +10,7 @@ pub type S3Result<T> = Result<T, S3Error>;
 pub enum S3Error {
     /// Cartridge operation failed
     #[error("Cartridge error: {0}")]
-    Cartridge(#[from] cartridge_core::error::CartridgeError),
+    Cartridge(#[from] cartridge::CartridgeError),
 
     /// Bucket does not exist
     #[error("Bucket does not exist: {0}")]

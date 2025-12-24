@@ -5,7 +5,7 @@ use crate::multipart::MultipartManager;
 use crate::utils::{
     bucket_to_path, compute_hash, generate_etag, key_to_path, validate_bucket_name, validate_key,
 };
-use cartridge::header::S3FeatureFuses;
+use cartridge::S3FeatureFuses;
 use cartridge::Cartridge;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -63,18 +63,18 @@ impl CartridgeS3Backend {
         let path = bucket_to_path(bucket);
         let mut cart = self.cartridge.write();
         let files = cart
-            .list_dir(&path)
+            .list(&path)
             .map_err(|_| S3Error::NoSuchBucket(bucket.to_string()))?;
         if !files.is_empty() {
             return Err(S3Error::BucketNotEmpty(bucket.to_string()));
         }
-        cart.delete_file(&path)?;
+        cart.delete(&path)?;
         Ok(())
     }
 
     pub fn list_buckets(&self) -> S3Result<Vec<String>> {
         let cart = self.cartridge.read();
-        let files = cart.list_dir("/")?;
+        let files = cart.list("/")?;
         Ok(files
             .into_iter()
             .filter_map(|f| f.strip_prefix('/').map(|s| s.to_string()))
@@ -88,8 +88,8 @@ impl CartridgeS3Backend {
         let mut cart = self.cartridge.write();
 
         // S3 PUT overwrites existing objects, so delete first if exists
-        let _ = cart.delete_file(&path); // Ignore error if file doesn't exist
-        cart.create_file(&path, data)?;
+        let _ = cart.delete(&path); // Ignore error if file doesn't exist
+        cart.write(&path, data)?;
 
         let hash = compute_hash(data);
         Ok(generate_etag(&hash))
@@ -100,7 +100,7 @@ impl CartridgeS3Backend {
         validate_key(key)?;
         let path = key_to_path(bucket, key);
         let cart = self.cartridge.read();
-        cart.read_file(&path)
+        cart.read(&path)
             .map_err(|_| S3Error::NoSuchKey(format!("{}/{}", bucket, key)))
     }
 
@@ -109,7 +109,7 @@ impl CartridgeS3Backend {
         validate_key(key)?;
         let path = key_to_path(bucket, key);
         let mut cart = self.cartridge.write();
-        cart.delete_file(&path)
+        cart.delete(&path)
             .map_err(|_| S3Error::NoSuchKey(format!("{}/{}", bucket, key)))
     }
 
@@ -118,7 +118,7 @@ impl CartridgeS3Backend {
         let bucket_path = bucket_to_path(bucket);
         let cart = self.cartridge.read();
         let files = cart
-            .list_dir(&bucket_path)
+            .list(&bucket_path)
             .map_err(|_| S3Error::NoSuchBucket(bucket.to_string()))?;
         Ok(files
             .into_iter()
@@ -145,7 +145,7 @@ impl CartridgeS3Backend {
         let path = key_to_path(bucket, key);
         let cart = self.cartridge.read();
         let data = cart
-            .read_file(&path)
+            .read(&path)
             .map_err(|_| S3Error::NoSuchKey(format!("{}/{}", bucket, key)))?;
         let size = data.len() as u64;
         let hash = compute_hash(&data);
@@ -222,7 +222,7 @@ impl CartridgeS3Backend {
 
     /// Put object ACL
     pub fn put_object_acl(&self, bucket: &str, key: &str, acl: &crate::acl::S3Acl) -> S3Result<()> {
-        use cartridge::header::S3AclMode;
+        use cartridge::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore => {
@@ -254,7 +254,7 @@ impl CartridgeS3Backend {
 
     /// Get object ACL
     pub fn get_object_acl(&self, bucket: &str, key: &str) -> S3Result<crate::acl::S3Acl> {
-        use cartridge::header::S3AclMode;
+        use cartridge::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore => {
@@ -295,7 +295,7 @@ impl CartridgeS3Backend {
         user: &str,
         required: &crate::acl::S3Permission,
     ) -> S3Result<bool> {
-        use cartridge::header::S3AclMode;
+        use cartridge::S3AclMode;
 
         match self.s3_fuses.acl_mode {
             S3AclMode::Ignore | S3AclMode::Record => {
@@ -319,7 +319,7 @@ impl CartridgeS3Backend {
         data: &[u8],
         sse: &crate::sse::SseHeaders,
     ) -> S3Result<String> {
-        use cartridge::header::S3SseMode;
+        use cartridge::S3SseMode;
 
         // Always write the object first
         let etag = self.put_object(bucket, key, data)?;
@@ -356,7 +356,7 @@ impl CartridgeS3Backend {
         bucket: &str,
         key: &str,
     ) -> S3Result<(Vec<u8>, Option<crate::sse::SseHeaders>)> {
-        use cartridge::header::S3SseMode;
+        use cartridge::S3SseMode;
 
         // Always read the object first
         let data = self.get_object(bucket, key)?;
@@ -393,7 +393,7 @@ impl CartridgeS3Backend {
 
     /// Get SSE headers only (for HEAD requests)
     pub fn get_sse_headers(&self, bucket: &str, key: &str) -> S3Result<Option<crate::sse::SseHeaders>> {
-        use cartridge::header::S3SseMode;
+        use cartridge::S3SseMode;
 
         match self.s3_fuses.sse_mode {
             S3SseMode::Ignore | S3SseMode::Record => Ok(None),
