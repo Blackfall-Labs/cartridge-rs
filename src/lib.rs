@@ -617,6 +617,23 @@ impl Cartridge {
         self.inner.update_manifest(f)
     }
 
+    /// Get the cartridge header with S3 fuses and metadata
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let cart = Cartridge::create("data", "My Data")?;
+    /// let fuses = cart.header().get_s3_fuses();
+    /// println!("ACL mode: {:?}", fuses.acl_mode);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn header(&self) -> &crate::core::header::Header {
+        self.inner.header()
+    }
+
     /// Update user-defined metadata for a file
     ///
     /// Stores custom key-value pairs in file metadata without modifying content.
