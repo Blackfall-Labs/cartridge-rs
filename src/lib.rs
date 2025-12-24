@@ -617,6 +617,88 @@ impl Cartridge {
         self.inner.update_manifest(f)
     }
 
+    /// Update user-defined metadata for a file
+    ///
+    /// Stores custom key-value pairs in file metadata without modifying content.
+    /// Useful for S3-compatible metadata, ACLs, SSE headers, etc.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// cart.write("file.txt", b"content")?;
+    /// cart.update_user_metadata("file.txt", "s3:acl", r#"{"grants":[]}"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn update_user_metadata<P: AsRef<str>>(
+        &mut self,
+        path: P,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<()> {
+        self.inner.update_user_metadata(path.as_ref(), key, value)
+    }
+
+    /// Create a snapshot of the current cartridge state
+    ///
+    /// # Arguments
+    /// * `name` - Snapshot name
+    /// * `description` - Snapshot description
+    /// * `snapshot_dir` - Directory to store snapshot files
+    ///
+    /// # Returns
+    /// Snapshot ID (timestamp in microseconds)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # use std::path::Path;
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// cart.write("file.txt", b"version 1")?;
+    /// let snapshot_id = cart.create_snapshot(
+    ///     "v1".to_string(),
+    ///     "First version".to_string(),
+    ///     Path::new("./snapshots")
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create_snapshot(
+        &self,
+        name: String,
+        description: String,
+        snapshot_dir: &std::path::Path,
+    ) -> Result<u64> {
+        self.inner.create_snapshot(name, description, snapshot_dir)
+    }
+
+    /// Restore cartridge state from a snapshot
+    ///
+    /// # Arguments
+    /// * `snapshot_id` - Snapshot ID to restore
+    /// * `snapshot_dir` - Directory containing snapshot files
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # use std::path::Path;
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// let snapshot_id = 1234567890000000u64;
+    /// cart.restore_snapshot(snapshot_id, Path::new("./snapshots"))?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn restore_snapshot(&mut self, snapshot_id: u64, snapshot_dir: &std::path::Path) -> Result<()> {
+        self.inner.restore_snapshot(snapshot_id, snapshot_dir)
+    }
+
     /// Get access to the underlying core Cartridge for advanced operations
     ///
     /// Use this when you need features not exposed by the high-level API:
