@@ -64,7 +64,7 @@ pub(crate) use core::{
 pub use crate::core::{
     catalog::{FileMetadata, FileType},
     error::{CartridgeError, Result},
-    header::{S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode, PAGE_SIZE},
+    header::{Header, S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode, PAGE_SIZE},
     iam::{Action, Effect, Policy, PolicyEngine, Statement},
     manifest::Manifest,
     snapshot::{SnapshotManager, SnapshotMetadata},
@@ -630,8 +630,13 @@ impl Cartridge {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn header(&self) -> &crate::core::header::Header {
+    pub fn header(&self) -> &Header {
         self.inner.header()
+    }
+
+    /// Get mutable access to the cartridge header
+    pub fn header_mut(&mut self) -> &mut Header {
+        self.inner.header_mut()
     }
 
     /// Update user-defined metadata for a file

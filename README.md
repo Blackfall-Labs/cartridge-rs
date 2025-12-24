@@ -20,7 +20,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cartridge-rs = { git = "https://github.com/manifest-humanity/cartridge" }
+cartridge-rs = { git = "https://github.com/blackfall-labs/cartridge" }
 ```
 
 ### Basic Usage
@@ -177,10 +177,12 @@ conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", [])?;
 ## Performance
 
 **Throughput** (64KB blocks):
+
 - Read: 18 GiB/s
 - Write: 9 GiB/s
 
 **Compression**:
+
 - LZ4 Compression: 9.77 GiB/s
 - LZ4 Decompression: 38.12 GiB/s
 
@@ -271,10 +273,10 @@ RUST_LOG=debug cargo test
 
 Cartridge is part of the Blackfall Labs technology stack:
 
-- **[SAM](https://github.com/manifest-humanity/sam)** - Offline AI assistant for crisis centers
-- **[CML](https://github.com/manifest-humanity/content-markup-language)** - Semantic content format
-- **[Engram](https://github.com/manifest-humanity/engram)** - Signed archives with Git integration
-- **[Byte Punch](https://github.com/manifest-humanity/byte-punch)** - Profile-aware compression
+- **[SAM](https://github.com/blackfall-labs/sam)** - Offline AI assistant for crisis centers
+- **[CML](https://github.com/blackfall-labs/content-markup-language)** - Semantic content format
+- **[Engram](https://github.com/blackfall-labs/engram)** - Signed archives with Git integration
+- **[Byte Punch](https://github.com/blackfall-labs/byte-punch)** - Profile-aware compression
 - **[Research Engine](../research-engine)** - Tauri desktop research application
 
 ## Status
