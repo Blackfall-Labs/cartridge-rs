@@ -2,16 +2,38 @@
 name = "cartridge-s3"
 version = "0.2.0"
 edition = "2021"
-authors = ["Manifest Humanity"]
+authors = ["Blackfall Labs"]
 description = "S3-compatible HTTP API for Cartridge storage with ACL and SSE metadata support"
 license = "Proprietary"
+repository = "https://github.com/blackfall-labs/cartridge-s3"
+homepage = "https://github.com/blackfall-labs/cartridge-s3"
+# readme = "README.md"  # TODO: Add README before publishing
+keywords = ["s3", "storage", "api", "cartridge", "archive"]
+categories = ["web-programming::http-server", "filesystem", "database"]
+exclude = [
+  "*.cart",
+  "*.db",
+  "*.db-shm",
+  "*.db-wal",
+  "*.eng",
+  ".env",
+  ".env.*",
+  "tmp/",
+  "temp/",
+  "scratch/",
+  "*.local",
+  "my-data.cart",
+  "target/",
+  ".vscode/",
+  ".idea/",
+]
 
 [dependencies]
-cartridge = { path = "../cartridge-rs", package = "cartridge-rs" }
+cartridge = { version = "0.2.0", package = "cartridge-rs" }
 
 # S3 implementation (updated to latest version)
 s3s = "0.12.0-rc.3"
-s3s-fs = "0.12.0-rc.3"  # Reference implementation
+s3s-fs = "0.12.0-rc.3" # Reference implementation
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -22,7 +44,12 @@ mime = "0.3"
 
 # HTTP server
 hyper = { version = "1.0", features = ["full"] }
-hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"] }
+hyper-util = { version = "0.1", features = [
+  "server",
+  "http1",
+  "http2",
+  "tokio",
+] }
 http-body-util = "0.1"
 
 # Serialization

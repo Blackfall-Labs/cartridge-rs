@@ -1,0 +1,63 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock (include for binary crates, exclude for libraries)
+# For this project (has bins), we keep Cargo.lock committed
+# Cargo.lock
+
+# Test artifacts
+*.cart
+*.db
+*.db-shm
+*.db-wal
+*.eng
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Local development
+tmp/
+temp/
+scratch/
+*.local
+
+# AWS credentials (if any)
+.aws/
+
+# Coverage and profiling
+*.profdata
+*.profraw
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Documentation build
+/target/doc/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# OS-specific
+Thumbs.db
+.DS_Store
