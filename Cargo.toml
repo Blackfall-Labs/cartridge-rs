@@ -3,13 +3,13 @@ name = "cartridge-rs"
 version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/manifest-humanity/cartridge"
+repository = "https://github.com/blackfall-labs/cartridge"
 description = "High-performance mutable archive format with SQLite VFS support"
 readme = "README.md"
 keywords = ["archive", "storage", "sqlite", "vfs", "mutable"]
 categories = ["filesystem", "database", "compression"]
 documentation = "https://docs.rs/cartridge-rs"
-homepage = "https://github.com/manifest-humanity/cartridge"
+homepage = "https://github.com/blackfall-labs/cartridge"
 
 [dependencies]
 # Engram integration (reuse existing crypto/compression)
