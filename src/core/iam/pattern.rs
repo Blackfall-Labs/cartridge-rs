@@ -26,13 +26,38 @@ impl PatternMatcher {
         Self::matches_normalized(&pattern, &path)
     }
 
-    /// Normalize a path (remove trailing slashes, handle empty segments)
+    /// Normalize a path (remove trailing slashes, handle empty segments, resolve .. and .)
     fn normalize(path: &str) -> String {
         let path = path.trim_start_matches('/').trim_end_matches('/');
         if path.is_empty() {
             return "/".to_string();
         }
-        format!("/{}", path)
+
+        // Resolve . and .. components
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let mut resolved: Vec<&str> = Vec::new();
+
+        for part in parts {
+            match part {
+                "." => {
+                    // Current directory, skip
+                    continue;
+                }
+                ".." => {
+                    // Parent directory, pop if possible
+                    resolved.pop();
+                }
+                _ => {
+                    resolved.push(part);
+                }
+            }
+        }
+
+        if resolved.is_empty() {
+            return "/".to_string();
+        }
+
+        format!("/{}", resolved.join("/"))
     }
 
     /// Match normalized paths
@@ -86,6 +111,14 @@ impl PatternMatcher {
             }
             // * matches exactly one segment
             "*" => Self::match_parts(pattern, path, pat_idx + 1, path_idx + 1),
+            // Pattern with wildcards (e.g., *.txt, file-*)
+            _ if pat_part.contains('*') => {
+                if Self::match_glob_segment(pat_part, path_part) {
+                    Self::match_parts(pattern, path, pat_idx + 1, path_idx + 1)
+                } else {
+                    false
+                }
+            }
             // Literal match
             _ => {
                 if pat_part == path_part {
@@ -95,6 +128,53 @@ impl PatternMatcher {
                 }
             }
         }
+    }
+
+    /// Match a glob pattern segment against a path segment
+    /// Supports * within segments (e.g., *.txt, file-*, test-*-data)
+    fn match_glob_segment(pattern: &str, segment: &str) -> bool {
+        let parts: Vec<&str> = pattern.split('*').collect();
+
+        // If pattern is just "*", it matches any segment
+        if parts.len() == 2 && parts[0].is_empty() && parts[1].is_empty() {
+            return true;
+        }
+
+        let mut pos = 0;
+
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+
+            // First part must match at beginning
+            if i == 0 {
+                if !segment.starts_with(part) {
+                    return false;
+                }
+                pos = part.len();
+            }
+            // Last part must match at end
+            else if i == parts.len() - 1 {
+                if !segment.ends_with(part) {
+                    return false;
+                }
+                // Check that end position is after current position
+                if segment.len() < pos + part.len() {
+                    return false;
+                }
+            }
+            // Middle parts must exist in order
+            else {
+                if let Some(found_pos) = segment[pos..].find(part) {
+                    pos += found_pos + part.len();
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 }
 
@@ -193,5 +273,55 @@ mod tests {
         assert!(!PatternMatcher::matches("/users/*", "/admin/alice"));
         assert!(!PatternMatcher::matches("/users/alice", "/users/bob"));
         assert!(!PatternMatcher::matches("/admin/**", "/users/test"));
+    }
+
+    #[test]
+    fn test_path_traversal_normalization() {
+        // Path traversal should be normalized, preventing bypass attempts
+        assert!(PatternMatcher::matches(
+            "/private/**",
+            "/public/../private/secret.txt"
+        ));
+        assert!(PatternMatcher::matches(
+            "/private/**",
+            "/public/./../private/secret.txt"
+        ));
+
+        // After normalization, /public/../private/file.txt becomes /private/file.txt
+        assert!(!PatternMatcher::matches(
+            "/public/**",
+            "/public/../private/file.txt"
+        ));
+
+        // Current directory references should be normalized
+        assert!(PatternMatcher::matches(
+            "/users/alice",
+            "/users/./alice"
+        ));
+    }
+
+    #[test]
+    fn test_glob_patterns_in_segments() {
+        // *.txt pattern
+        assert!(PatternMatcher::matches("/data/*.txt", "/data/file.txt"));
+        assert!(PatternMatcher::matches("/data/*.txt", "/data/document.txt"));
+        assert!(!PatternMatcher::matches("/data/*.txt", "/data/file.json"));
+        assert!(!PatternMatcher::matches("/data/*.txt", "/data/subdir/file.txt"));
+
+        // file-* pattern
+        assert!(PatternMatcher::matches("/data/file-*", "/data/file-123"));
+        assert!(PatternMatcher::matches("/data/file-*", "/data/file-abc"));
+        assert!(!PatternMatcher::matches("/data/file-*", "/data/other-123"));
+
+        // *-data pattern
+        assert!(PatternMatcher::matches("/logs/*-data", "/logs/test-data"));
+        assert!(PatternMatcher::matches("/logs/*-data", "/logs/prod-data"));
+        assert!(!PatternMatcher::matches("/logs/*-data", "/logs/data-test"));
+
+        // Multiple wildcards in segment
+        assert!(PatternMatcher::matches(
+            "/logs/*-*-*.log",
+            "/logs/app-prod-2024.log"
+        ));
     }
 }
