@@ -1,4 +1,4 @@
-use cartridge::{header::Header, snapshot::SnapshotManager, Cartridge};
+use cartridge_rs::{header::Header, snapshot::SnapshotManager, Cartridge};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::HashMap;
 use tempfile::TempDir;

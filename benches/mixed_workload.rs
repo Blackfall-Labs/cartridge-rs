@@ -1,4 +1,4 @@
-use cartridge::{compression::CompressionMethod, Cartridge};
+use cartridge_rs::{compression::CompressionMethod, Cartridge};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 

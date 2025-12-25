@@ -1,4 +1,4 @@
-use cartridge::{compression::*, encryption::*, engram_integration::EngramFreezer, Cartridge};
+use cartridge_rs::{compression::*, encryption::*, engram_integration::EngramFreezer, Cartridge};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 use tempfile::TempDir;

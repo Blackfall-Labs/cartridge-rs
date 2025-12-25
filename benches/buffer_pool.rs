@@ -1,7 +1,7 @@
 //! Benchmarks for ARC buffer pool performance
 
-use cartridge::buffer_pool::BufferPool;
-use cartridge::page::{Page, PageType};
+use cartridge_rs::buffer_pool::BufferPool;
+use cartridge_rs::page::{Page, PageType};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::sync::Arc;
 

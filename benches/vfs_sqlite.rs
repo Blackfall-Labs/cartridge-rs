@@ -1,4 +1,4 @@
-use cartridge::{vfs::register_vfs, Cartridge};
+use cartridge_rs::{vfs::register_vfs, Cartridge};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use parking_lot::Mutex;
 use rusqlite::Connection;

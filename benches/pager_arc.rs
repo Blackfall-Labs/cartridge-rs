@@ -1,4 +1,4 @@
-use cartridge::Cartridge;
+use cartridge_rs::Cartridge;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 /// Benchmark pager read performance with hot cache (repeated reads)

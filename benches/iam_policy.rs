@@ -1,4 +1,4 @@
-use cartridge::iam::{Action, Effect, Policy, PolicyEngine, Statement};
+use cartridge_rs::iam::{Action, Effect, Policy, PolicyEngine, Statement};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 /// Create a complex policy with multiple statements

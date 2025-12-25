@@ -1,4 +1,4 @@
-use cartridge::allocator::{
+use cartridge_rs::allocator::{
     bitmap::BitmapAllocator, extent::ExtentAllocator, hybrid::HybridAllocator, BlockAllocator,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
