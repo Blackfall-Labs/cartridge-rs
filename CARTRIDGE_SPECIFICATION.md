@@ -1,5 +1,92 @@
 # Cartridge Format Specification v0.2
 
+**Document Version:** 2.1
+**Format Version:** 0.2.4
+**Last Updated:** 2025-12-24
+**Status:** Production Specification
+**Supersedes:** v0.1.0 (see Migration section)
+
+> **For Implementers:** This specification is complete and unambiguous. You can reimplement Cartridge from this spec alone without referring to the Rust implementation. All byte offsets, field sizes, and algorithms are precisely defined.
+
+---
+
+## Implementer's Quick Reference
+
+### Minimum Viable Reader
+
+To read a Cartridge v0.2 file, you MUST implement:
+
+1. **Header Parser** (Page 0, offsets 0-4095)
+   - Read magic number, validate `"CART\x00\x02\x00\x00"`
+   - Read `total_blocks` (offset 16), `free_blocks` (offset 24)
+   - Read `slug` (offset 40), `title` (offset 296)
+
+2. **Catalog Deserializer** (Page 1, offsets 4096-8191)
+   - Read 4KB page
+   - Skip 64-byte page header
+   - Deserialize JSON B-tree from remaining 4032 bytes
+   - Build path → FileMetadata mapping
+
+3. **Page Reader**
+   - For each file's block list, read blocks from disk
+   - Handle optional compression (LZ4/Zstd)
+   - Handle optional encryption (AES-256-GCM)
+   - Verify checksums if present
+
+4. **File Reconstructor**
+   - Concatenate decompressed/decrypted blocks
+   - Return file data
+
+### Minimum Viable Writer
+
+To write a Cartridge v0.2 file, you MUST implement:
+
+1. **Container Creator**
+   - Allocate 12KB file (3 pages: header + catalog + allocator)
+   - Write header at offset 0
+   - Write empty catalog at offset 4096
+   - Write empty allocator at offset 8192
+
+2. **Allocator** (Bitmap or Extent)
+   - Track free/allocated blocks
+   - Allocate contiguous blocks for files
+   - Serialize state to JSON on page 2
+
+3. **File Writer**
+   - Allocate blocks via allocator
+   - Optionally compress data (LZ4/Zstd)
+   - Optionally encrypt data (AES-256-GCM)
+   - Write blocks to disk
+   - Update catalog with file metadata
+
+4. **Auto-Grower**
+   - Monitor `free_blocks < total_blocks * 0.10`
+   - If true: double `total_blocks`, extend file
+   - Update header and allocator
+
+### Required Constants
+
+```c
+#define CART_PAGE_SIZE      4096
+#define CART_MIN_BLOCKS     3
+#define CART_MAGIC          "CART\x00\x02\x00\x00"
+#define CART_VERSION_MAJOR  2
+#define CART_VERSION_MINOR  4
+```
+
+### Validation Rules (MUST enforce)
+
+1. `magic == "CART\x00\x02\x00\x00"` (offset 0-7)
+2. `version_major == 2` (offset 8-9)
+3. `block_size == 4096` (offset 12-15)
+4. `free_blocks <= total_blocks` (offsets 24, 16)
+5. `total_blocks >= 3` (offset 16)
+6. `btree_root_page == 1` (offset 32)
+7. `slug` matches `/^[a-z0-9-]+$/` (offset 40-295)
+
+---
+# Cartridge Format Specification v0.2
+
 **Document Version:** 2.0
 **Format Version:** 0.2.4
 **Last Updated:** 2025-12-24
