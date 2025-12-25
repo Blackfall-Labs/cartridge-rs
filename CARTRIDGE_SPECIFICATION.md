@@ -17,17 +17,20 @@
 To read a Cartridge v0.2 file, you MUST implement:
 
 1. **Header Parser** (Page 0, offsets 0-4095)
+
    - Read magic number, validate `"CART\x00\x02\x00\x00"`
    - Read `total_blocks` (offset 16), `free_blocks` (offset 24)
    - Read `slug` (offset 40), `title` (offset 296)
 
 2. **Catalog Deserializer** (Page 1, offsets 4096-8191)
+
    - Read 4KB page
    - Skip 64-byte page header
    - Deserialize JSON B-tree from remaining 4032 bytes
    - Build path → FileMetadata mapping
 
 3. **Page Reader**
+
    - For each file's block list, read blocks from disk
    - Handle optional compression (LZ4/Zstd)
    - Handle optional encryption (AES-256-GCM)
@@ -42,17 +45,20 @@ To read a Cartridge v0.2 file, you MUST implement:
 To write a Cartridge v0.2 file, you MUST implement:
 
 1. **Container Creator**
+
    - Allocate 12KB file (3 pages: header + catalog + allocator)
    - Write header at offset 0
    - Write empty catalog at offset 4096
    - Write empty allocator at offset 8192
 
 2. **Allocator** (Bitmap or Extent)
+
    - Track free/allocated blocks
    - Allocate contiguous blocks for files
    - Serialize state to JSON on page 2
 
 3. **File Writer**
+
    - Allocate blocks via allocator
    - Optionally compress data (LZ4/Zstd)
    - Optionally encrypt data (AES-256-GCM)
@@ -85,6 +91,7 @@ To write a Cartridge v0.2 file, you MUST implement:
 7. `slug` matches `/^[a-z0-9-]+$/` (offset 40-295)
 
 ---
+
 # Cartridge Format Specification v0.2
 
 **Document Version:** 2.0
@@ -144,14 +151,17 @@ This document defines the binary format and architecture for Cartridge mutable a
 ### Key Concepts
 
 **Slug vs Title:**
+
 - **Slug:** Kebab-case identifier for filenames/registry (e.g., `us-constitution`)
 - **Title:** Human-readable display name (e.g., `U.S. Constitution`)
 
 **Container vs Archive:**
+
 - **Container:** Mutable Cartridge (this specification)
 - **Archive:** Immutable Engram (created via freezing)
 
 **Blocks vs Pages:**
+
 - Terms are synonymous - one block = one page = 4096 bytes
 
 ### Conventions
@@ -196,12 +206,12 @@ This document defines the binary format and architecture for Cartridge mutable a
 
 ### Reserved Pages
 
-| Page ID | Purpose | Fixed | Since |
-|---------|---------|-------|-------|
-| 0 | Header (slug, title, metadata) | ✅ Always | v0.1 |
-| 1 | Catalog B-tree root | ✅ Always | v0.1 |
-| 2 | Allocator state | ✅ Always | v0.1 |
-| 3+ | Content data / audit log | Dynamic | v0.1 |
+| Page ID | Purpose                        | Fixed     | Since |
+| ------- | ------------------------------ | --------- | ----- |
+| 0       | Header (slug, title, metadata) | ✅ Always | v0.1  |
+| 1       | Catalog B-tree root            | ✅ Always | v0.1  |
+| 2       | Allocator state                | ✅ Always | v0.1  |
+| 3+      | Content data / audit log       | Dynamic   | v0.1  |
 
 ---
 
@@ -229,6 +239,7 @@ Cartridge containers **automatically expand** when space runs low. No capacity p
 ### Growth Trigger
 
 Growth occurs when:
+
 ```
 free_blocks < (total_blocks * threshold_percent)
 ```
@@ -236,6 +247,7 @@ free_blocks < (total_blocks * threshold_percent)
 Default threshold: **10%** (configurable)
 
 **Example:**
+
 - Container: 100 blocks (400 KB)
 - Free blocks: 8 (32 KB)
 - Threshold: 10% of 100 = 10 blocks
@@ -244,23 +256,27 @@ Default threshold: **10%** (configurable)
 ### Growth Algorithm
 
 **Step 1: Calculate New Size**
+
 ```rust
 new_total_blocks = current_total_blocks * 2
 ```
 
 **Step 2: Expand File**
+
 ```rust
 new_size_bytes = new_total_blocks * 4096
 file.set_len(new_size_bytes)?
 ```
 
 **Step 3: Update Header**
+
 ```rust
 header.total_blocks = new_total_blocks
 header.free_blocks = new_total_blocks - allocated_blocks
 ```
 
 **Step 4: Update Allocator**
+
 ```rust
 allocator.resize(new_total_blocks)
 ```
@@ -268,6 +284,7 @@ allocator.resize(new_total_blocks)
 ### Growth Overhead
 
 **Measured Performance:**
+
 - Target: < 1ms per doubling (claimed in README, **unverified**)
 - Actual: Not yet benchmarked (see PERFORMANCE_VERIFICATION.md)
 
@@ -279,6 +296,7 @@ allocator.resize(new_total_blocks)
 **Practical:** Limited by filesystem and available disk space
 
 **Example Limits:**
+
 - NTFS: 16 EB (exceeds practical limits)
 - ext4: 16 TB (4,294,967,296 blocks)
 - FAT32: 4 GB (1,048,576 blocks)
@@ -306,6 +324,7 @@ let cart = CartridgeBuilder::new()
 ### Error Handling
 
 **Out of Disk Space:**
+
 ```rust
 match cart.write("/large.bin", &data) {
     Err(CartridgeError::NoSpace) => {
@@ -316,6 +335,7 @@ match cart.write("/large.bin", &data) {
 ```
 
 **Maximum Size Reached:**
+
 ```rust
 CartridgeError::MaxSizeExceeded {
     requested: 2_000_000,
@@ -336,12 +356,14 @@ v0.2 introduces a **manifest system** for human-readable metadata.
 **Definition:** Filesystem-safe identifier (kebab-case)
 
 **Format:**
+
 - Lowercase ASCII letters (a-z)
 - Numbers (0-9)
 - Hyphens (-) for separation
 - No spaces, underscores, or special characters
 
 **Valid Examples:**
+
 ```
 us-constitution
 my-data
@@ -350,6 +372,7 @@ backup-v1
 ```
 
 **Invalid Examples:**
+
 ```
 My_Data          ❌ (uppercase, underscore)
 my data          ❌ (space)
@@ -358,6 +381,7 @@ my-data.backup   ❌ (period)
 ```
 
 **Validation:**
+
 ```rust
 fn validate_slug(slug: &str) -> bool {
     slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -373,11 +397,13 @@ fn validate_slug(slug: &str) -> bool {
 **Definition:** Human-readable display name (UTF-8)
 
 **Format:**
+
 - Any UTF-8 characters allowed
 - Maximum length: 255 bytes (not characters, due to UTF-8)
 - Used for display in UIs
 
 **Examples:**
+
 ```
 U.S. Constitution
 My Project Data
@@ -386,17 +412,20 @@ Project: Phase 1 (Alpha)
 ```
 
 **Storage:**
+
 - Stored in header page (see Header Structure below)
 - UTF-8 encoded, null-padded to 256 bytes
 
 ### Filename Mapping
 
 **Cartridge File:**
+
 ```
 {slug}.cart
 ```
 
 **Examples:**
+
 ```
 us-constitution → us-constitution.cart
 my-data         → my-data.cart
@@ -422,6 +451,7 @@ cart.set_title("United States Constitution")?;
 **Important:** Slug **cannot be changed** after creation
 
 **Reason:** Slug is used for:
+
 - Filename (`{slug}.cart`)
 - Registry keys
 - Cross-references in systems
@@ -438,24 +468,24 @@ cart.set_title("United States Constitution")?;
 
 #### Byte Layout (v0.2)
 
-| Offset | Size | Type | Field | Description |
-|--------|------|------|-------|-------------|
-| 0 | 8 | u8[8] | magic | Magic: `"CART\x00\x02\x00\x00"` (v0.2) |
-| 8 | 2 | u16 | version_major | Major version (2 for v0.2) |
-| 10 | 2 | u16 | version_minor | Minor version (0-4 for v0.2.x) |
-| 12 | 4 | u32 | block_size | Block size (4096, constant) |
-| 16 | 8 | u64 | total_blocks | Total capacity (grows dynamically) |
-| 24 | 8 | u64 | free_blocks | Available blocks |
-| 32 | 8 | u64 | btree_root_page | Catalog root (always 1) |
-| 40 | 256 | char[256] | slug | Kebab-case identifier (UTF-8, null-padded) |
-| 296 | 256 | char[256] | title | Human name (UTF-8, null-padded) |
-| 552 | 8 | u64 | created_timestamp | Created (microseconds since epoch) |
-| 560 | 8 | u64 | modified_timestamp | Modified (microseconds since epoch) |
-| 568 | 8 | u64 | growth_count | Number of auto-growth operations |
-| 576 | 4 | u32 | growth_threshold_percent | Trigger percent (default: 10) |
-| 580 | 4 | u32 | flags | Feature flags (see below) |
-| 584 | 192 | u8[192] | reserved | Future use (zeros) |
-| 776 | 3320 | u8[3320] | padding | Pad to 4096 bytes (zeros) |
+| Offset | Size | Type      | Field                    | Description                                |
+| ------ | ---- | --------- | ------------------------ | ------------------------------------------ |
+| 0      | 8    | u8[8]     | magic                    | Magic: `"CART\x00\x02\x00\x00"` (v0.2)     |
+| 8      | 2    | u16       | version_major            | Major version (2 for v0.2)                 |
+| 10     | 2    | u16       | version_minor            | Minor version (0-4 for v0.2.x)             |
+| 12     | 4    | u32       | block_size               | Block size (4096, constant)                |
+| 16     | 8    | u64       | total_blocks             | Total capacity (grows dynamically)         |
+| 24     | 8    | u64       | free_blocks              | Available blocks                           |
+| 32     | 8    | u64       | btree_root_page          | Catalog root (always 1)                    |
+| 40     | 256  | char[256] | slug                     | Kebab-case identifier (UTF-8, null-padded) |
+| 296    | 256  | char[256] | title                    | Human name (UTF-8, null-padded)            |
+| 552    | 8    | u64       | created_timestamp        | Created (microseconds since epoch)         |
+| 560    | 8    | u64       | modified_timestamp       | Modified (microseconds since epoch)        |
+| 568    | 8    | u64       | growth_count             | Number of auto-growth operations           |
+| 576    | 4    | u32       | growth_threshold_percent | Trigger percent (default: 10)              |
+| 580    | 4    | u32       | flags                    | Feature flags (see below)                  |
+| 584    | 192  | u8[192]   | reserved                 | Future use (zeros)                         |
+| 776    | 3320 | u8[3320]  | padding                  | Pad to 4096 bytes (zeros)                  |
 
 #### C Structure (for reference)
 
@@ -492,6 +522,7 @@ ASCII: 'C'   'A'   'R'   'T'   NUL   STX   NUL   NUL
 ```
 
 **Changes from v0.1:**
+
 - Byte 5: `0x01` → `0x02` (indicates v0.2 format)
 
 #### Feature Flags (offset 580)
@@ -502,15 +533,16 @@ Bit:  0       1       2       3       4-31
 Flag: COMPR   ENCR    IAM     AUDIT   (reserved)
 ```
 
-| Bit | Name | Description |
-|-----|------|-------------|
-| 0 | COMPRESSION | Compression enabled (LZ4/Zstd) |
-| 1 | ENCRYPTION | Encryption enabled (AES-256-GCM) |
-| 2 | IAM_POLICY | IAM policies active |
-| 3 | AUDIT_LOG | Audit logging enabled |
-| 4-31 | (reserved) | Must be 0 |
+| Bit  | Name        | Description                      |
+| ---- | ----------- | -------------------------------- |
+| 0    | COMPRESSION | Compression enabled (LZ4/Zstd)   |
+| 1    | ENCRYPTION  | Encryption enabled (AES-256-GCM) |
+| 2    | IAM_POLICY  | IAM policies active              |
+| 3    | AUDIT_LOG   | Audit logging enabled            |
+| 4-31 | (reserved)  | Must be 0                        |
 
 **Examples:**
+
 ```
 0b0001 = 1   → Compression only
 0b0011 = 3   → Compression + Encryption
@@ -520,6 +552,7 @@ Flag: COMPR   ENCR    IAM     AUDIT   (reserved)
 #### Validation Rules
 
 **v0.2 Header:**
+
 1. Magic must be `"CART\x00\x02\x00\x00"`
 2. version_major must be 2
 3. version_minor must be 0-4 (current: 4)
@@ -531,6 +564,7 @@ Flag: COMPR   ENCR    IAM     AUDIT   (reserved)
 9. reserved bytes must be zero
 
 **Validation Code:**
+
 ```rust
 fn validate_header(h: &CartridgeHeader) -> Result<()> {
     if h.magic != b"CART\x00\x02\x00\x00" {
@@ -565,27 +599,27 @@ All pages (except page 0) share a common structure.
 
 #### Byte Layout
 
-| Offset | Size | Type | Field | Description |
-|--------|------|------|-------|-------------|
-| 0 | 1 | u8 | page_type | Page type identifier (0-5) |
-| 1 | 32 | u8[32] | checksum | SHA-256 checksum (optional) |
-| 33 | 1 | u8 | compression | Compression method (0-2) |
-| 34 | 4 | u32 | original_size | Uncompressed size (bytes) |
-| 38 | 4 | u32 | compressed_size | Compressed size (bytes) |
-| 42 | 1 | u8 | encryption | Encryption enabled (0/1) |
-| 43 | 21 | u8[21] | reserved | Future use |
-| 64 | 4032 | u8[4032] | data | Payload data |
+| Offset | Size | Type     | Field           | Description                 |
+| ------ | ---- | -------- | --------------- | --------------------------- |
+| 0      | 1    | u8       | page_type       | Page type identifier (0-5)  |
+| 1      | 32   | u8[32]   | checksum        | SHA-256 checksum (optional) |
+| 33     | 1    | u8       | compression     | Compression method (0-2)    |
+| 34     | 4    | u32      | original_size   | Uncompressed size (bytes)   |
+| 38     | 4    | u32      | compressed_size | Compressed size (bytes)     |
+| 42     | 1    | u8       | encryption      | Encryption enabled (0/1)    |
+| 43     | 21   | u8[21]   | reserved        | Future use                  |
+| 64     | 4032 | u8[4032] | data            | Payload data                |
 
 #### Page Types
 
-| Value | Name | Description | Since |
-|-------|------|-------------|-------|
-| 0 | Header | Archive header (page 0 only) | v0.1 |
-| 1 | CatalogBTree | B-tree catalog node | v0.1 |
-| 2 | ContentData | File content data | v0.1 |
-| 3 | Freelist | Free block tracking | v0.1 |
-| 4 | AuditLog | Audit log entries | v0.2 |
-| 5 | SnapshotMeta | Snapshot metadata | v0.2 |
+| Value | Name         | Description                  | Since |
+| ----- | ------------ | ---------------------------- | ----- |
+| 0     | Header       | Archive header (page 0 only) | v0.1  |
+| 1     | CatalogBTree | B-tree catalog node          | v0.1  |
+| 2     | ContentData  | File content data            | v0.1  |
+| 3     | Freelist     | Free block tracking          | v0.1  |
+| 4     | AuditLog     | Audit log entries            | v0.2  |
+| 5     | SnapshotMeta | Snapshot metadata            | v0.2  |
 
 #### C Structure
 
@@ -612,10 +646,12 @@ struct Page {
 **Output:** 32-byte hash stored at offset 1-32
 
 **Optional Checksum:**
+
 - All zeros (32 × 0x00): **Skip verification** (performance mode)
 - Non-zero: **Verify on read**
 
 **Verification:**
+
 ```rust
 fn verify_page(page: &Page) -> Result<()> {
     if page.header.checksum != [0u8; 32] {
@@ -630,24 +666,26 @@ fn verify_page(page: &Page) -> Result<()> {
 
 #### Compression Field
 
-| Value | Method | Speed | Ratio | Use Case |
-|-------|--------|-------|-------|----------|
-| 0 | None | N/A | 1.0x | Already compressed data |
-| 1 | LZ4 | 9.77 GiB/s | ~2x | Latency-sensitive |
-| 2 | Zstd | 4.87 GiB/s | ~4-5x | Cold storage |
+| Value | Method | Speed      | Ratio | Use Case                |
+| ----- | ------ | ---------- | ----- | ----------------------- |
+| 0     | None   | N/A        | 1.0x  | Already compressed data |
+| 1     | LZ4    | 9.77 GiB/s | ~2x   | Latency-sensitive       |
+| 2     | Zstd   | 4.87 GiB/s | ~4-5x | Cold storage            |
 
 **Decompression Performance:**
+
 - LZ4: 38.12 GiB/s (3.9x faster than compression)
 - Zstd: ~5.64 GiB/s
 
 #### Encryption Field
 
-| Value | Description |
-|-------|-------------|
-| 0 | No encryption |
-| 1 | AES-256-GCM encrypted |
+| Value | Description           |
+| ----- | --------------------- |
+| 0     | No encryption         |
+| 1     | AES-256-GCM encrypted |
 
 **Encrypted Data Format:**
+
 ```
 [nonce: 12 bytes][ciphertext: 4000 bytes][tag: 16 bytes][padding: 4 bytes]
 ```
@@ -720,40 +758,46 @@ pub struct FileMetadata {
 
 #### FileType Values
 
-| Value | Name | Description |
-|-------|------|-------------|
-| 0 | File | Regular file (has blocks) |
-| 1 | Directory | Directory (no blocks, virtual) |
+| Value | Name      | Description                    |
+| ----- | --------- | ------------------------------ |
+| 0     | File      | Regular file (has blocks)      |
+| 1     | Directory | Directory (no blocks, virtual) |
 
 #### Catalog Limitations (v0.2.x)
 
 **Single-Page Catalog:**
+
 - Maximum catalog size: 4032 bytes (after 64-byte page header)
 - With compression: ~8,000-12,000 bytes effective capacity
 - Approximate file capacity: **10,000-50,000 files** (depends on path lengths)
 
 **When to Upgrade:**
+
 - If catalog exceeds single page → Error: `CatalogFull`
 - Solution: Upgrade to v0.3 with multi-page B-tree
 
 #### Catalog Operations
 
 **Lookup (O(log n)):**
+
 ```rust
 let metadata = catalog.get("/path/to/file.txt")?;
 ```
 
 **Insert (O(log n)):**
+
 ```rust
 catalog.insert("/new/file.txt", metadata)?;
 ```
 
 **Delete (O(log n)):**
+
 ```rust
 catalog.remove("/path/to/file.txt")?;
 ```
 
 **List Directory (O(n)):**
+
 ```rust
 let files = catalog.list_dir("/docs/")?;
 // Returns: ["guide.md", "api.md", "faq.md"]
@@ -775,11 +819,13 @@ Cartridge uses a **hybrid allocator** combining two strategies:
 **Strategy:** Bit array tracking individual blocks
 
 **Structure:**
+
 - Array of u64 values
 - Each bit = one block (0 = free, 1 = allocated)
 - 64 blocks per u64 entry
 
 **Example:**
+
 ```
 bitmap[0] = 0b0000_0111  (binary)
           = 7            (decimal)
@@ -789,6 +835,7 @@ Blocks 3-63: free (bits clear)
 ```
 
 **Allocation Algorithm:**
+
 ```rust
 fn allocate_bitmap(&mut self, blocks_needed: u64) -> Result<Vec<u64>> {
     let mut allocated = Vec::new();
@@ -806,10 +853,12 @@ fn allocate_bitmap(&mut self, blocks_needed: u64) -> Result<Vec<u64>> {
 ```
 
 **Performance:**
+
 - Allocate 100K blocks: 4.15 ms
 - Throughput: 24,096 blocks/ms
 
 **Best For:**
+
 - Small files (4KB - 256KB)
 - Random allocation patterns
 - Fine-grained control
@@ -819,6 +868,7 @@ fn allocate_bitmap(&mut self, blocks_needed: u64) -> Result<Vec<u64>> {
 **Strategy:** Track contiguous free regions (extents)
 
 **Structure:**
+
 ```rust
 struct Extent {
     start: u64,     // Starting block ID
@@ -832,6 +882,7 @@ struct ExtentAllocator {
 ```
 
 **Free Extents List Example:**
+
 ```rust
 free_extents = [
     Extent { start: 100, length: 500 },   // Blocks 100-599 free
@@ -840,6 +891,7 @@ free_extents = [
 ```
 
 **Allocation Algorithm (First-Fit):**
+
 ```rust
 fn allocate_extent(&mut self, blocks_needed: u64) -> Result<Vec<u64>> {
     for extent in &mut self.free_extents {
@@ -855,6 +907,7 @@ fn allocate_extent(&mut self, blocks_needed: u64) -> Result<Vec<u64>> {
 ```
 
 **Coalescing on Free:**
+
 ```rust
 fn free_extent(&mut self, blocks: &[u64]) {
     let new_extent = Extent {
@@ -870,11 +923,13 @@ fn free_extent(&mut self, blocks: &[u64]) {
 ```
 
 **Performance:**
+
 - Allocate 100K blocks: 576 μs
 - Throughput: 173,611 blocks/ms
 - **301x faster** than bitmap for large allocations
 
 **Best For:**
+
 - Large files (≥ 256KB)
 - Contiguous allocation (better disk locality)
 - High throughput
@@ -882,6 +937,7 @@ fn free_extent(&mut self, blocks: &[u64]) {
 ### Hybrid Strategy
 
 **Routing Logic:**
+
 ```rust
 fn allocate(&mut self, size_bytes: u64) -> Result<Vec<u64>> {
     let blocks_needed = (size_bytes + 4095) / 4096;
@@ -897,27 +953,31 @@ fn allocate(&mut self, size_bytes: u64) -> Result<Vec<u64>> {
 ```
 
 **Threshold:**
+
 - **< 256KB:** Bitmap allocator
 - **≥ 256KB:** Extent allocator
 
 **Rationale:**
+
 - Small files: Many small allocations → bitmap handles well
 - Large files: Contiguous blocks → extent optimizes disk I/O
 
 **Performance Comparison:**
 
 | Allocator | 4KB Latency | 64KB Latency | 256KB Latency | 1MB Latency |
-|-----------|-------------|--------------|---------------|-------------|
-| Bitmap | 4.99 μs | 11.40 μs | N/A | N/A |
-| Extent | N/A | N/A | 7.83 μs | 7.16 μs |
-| Hybrid | 4.99 μs | 11.40 μs | 7.83 μs | 7.16 μs |
+| --------- | ----------- | ------------ | ------------- | ----------- |
+| Bitmap    | 4.99 μs     | 11.40 μs     | N/A           | N/A         |
+| Extent    | N/A         | N/A          | 7.83 μs       | 7.16 μs     |
+| Hybrid    | 4.99 μs     | 11.40 μs     | 7.83 μs       | 7.16 μs     |
 
 **Speedup:**
+
 - Hybrid (large) vs Hybrid (small): **16,700x faster** for 1MB files
 
 ### Fragmentation
 
 **Fragmentation Score:**
+
 ```rust
 fn fragmentation_score(&self) -> f64 {
     let ideal_extents = if self.allocated_count == 0 { 0 } else { 1 };
@@ -927,11 +987,13 @@ fn fragmentation_score(&self) -> f64 {
 ```
 
 **Interpretation:**
+
 - Score = 1.0: No fragmentation (single free extent)
 - Score > 1.0: Fragmentation present
 - Score = 10.0: 10 free extents (highly fragmented)
 
 **Defragmentation (Future v0.3):**
+
 - Compact files to beginning of archive
 - Merge free extents
 - Reduce total_blocks if possible
@@ -939,6 +1001,7 @@ fn fragmentation_score(&self) -> f64 {
 ### Allocator State Serialization
 
 **Page 2 Format (JSON, temporary):**
+
 ```json
 {
   "bitmap": {
@@ -970,14 +1033,17 @@ Cartridge uses an **Adaptive Replacement Cache (ARC)** for hot data.
 ### ARC Algorithm
 
 **Two Lists:**
+
 1. **T1 (Recent):** Recently accessed pages
 2. **T2 (Frequent):** Frequently accessed pages
 
 **Adaptive:**
+
 - Dynamically balances between recency and frequency
 - Adjusts based on access patterns
 
 **Adaptation Speed:**
+
 - 164 microseconds to adapt to workload shifts (verified)
 
 ### Buffer Pool Configuration
@@ -985,6 +1051,7 @@ Cartridge uses an **Adaptive Replacement Cache (ARC)** for hot data.
 **Default Size:** 1,000 pages (4 MB)
 
 **Configurable:**
+
 ```rust
 use cartridge_rs::CartridgeBuilder;
 
@@ -997,44 +1064,47 @@ let cart = CartridgeBuilder::new()
 
 ### Performance Characteristics
 
-| Pool Size | Get (hit) | Put | Miss |
-|-----------|-----------|-----|------|
-| 100 | 20.37 μs | 24.98 μs | 3.26 ns |
-| 1,000 | 255.0 μs | 285.7 μs | 3.26 ns |
-| 10,000 | 6.10 ms | 6.11 ms | 3.81 ns |
+| Pool Size | Get (hit) | Put      | Miss    |
+| --------- | --------- | -------- | ------- |
+| 100       | 20.37 μs  | 24.98 μs | 3.26 ns |
+| 1,000     | 255.0 μs  | 285.7 μs | 3.26 ns |
+| 10,000    | 6.10 ms   | 6.11 ms  | 3.81 ns |
 
 **Scaling:** Near-linear with pool size
 
 ### Hit Rates
 
-| Access Pattern | Hit Rate |
-|----------------|----------|
-| Random Access | ~66% |
-| 80/20 Workload | ~90%+ |
+| Access Pattern  | Hit Rate                 |
+| --------------- | ------------------------ |
+| Random Access   | ~66%                     |
+| 80/20 Workload  | ~90%+                    |
 | Sequential Scan | ~10% (not optimized for) |
 
 ### Access Pattern Performance
 
-| Pattern | Latency (10K pool) | Analysis |
-|---------|-------------------|----------|
-| Sequential Scan | 7.53 ms | Poor (ARC not optimized for sequential) |
-| Random Access | 637 μs | Good (benefits from caching) |
-| 80/20 Workload | 1.74 ms | Excellent (ARC adapts to hotspots) |
+| Pattern         | Latency (10K pool) | Analysis                                |
+| --------------- | ------------------ | --------------------------------------- |
+| Sequential Scan | 7.53 ms            | Poor (ARC not optimized for sequential) |
+| Random Access   | 637 μs             | Good (benefits from caching)            |
+| 80/20 Workload  | 1.74 ms            | Excellent (ARC adapts to hotspots)      |
 
 ### Eviction Policy
 
 **When full:**
+
 1. Evict from T1 (recent) if T1 is larger
 2. Evict from T2 (frequent) if T2 is larger
 3. Move evicted page to ghost list (metadata only)
 
 **Ghost Lists:**
+
 - Track recently evicted pages (metadata only, no data)
 - Used to guide future adaptation decisions
 
 ### Cache Key
 
 **Format:**
+
 ```rust
 cache_key = page_id  // u64
 ```
@@ -1044,6 +1114,7 @@ cache_key = page_id  // u64
 ### Thread Safety
 
 **Synchronization:**
+
 ```rust
 struct BufferPool {
     pool: Arc<RwLock<HashMap<u64, Page>>>,
@@ -1052,6 +1123,7 @@ struct BufferPool {
 ```
 
 **Concurrent Access:**
+
 - Multiple readers: ✅ Allowed
 - Writer blocks readers: ✅ Safe
 - Performance: 10,000+ reads/sec/core
@@ -1066,22 +1138,24 @@ Compression is applied to page data (4032 bytes), not the entire page.
 
 ### Compression Methods
 
-| Value | Name | Compress | Decompress | Ratio | Use Case |
-|-------|------|----------|------------|-------|----------|
-| 0 | None | N/A | N/A | 1.0x | Already compressed |
-| 1 | LZ4 | 9.77 GiB/s | 38.12 GiB/s | ~2x | Latency-sensitive |
-| 2 | Zstd | 4.87 GiB/s | ~5.64 GiB/s | ~4-5x | Cold storage |
+| Value | Name | Compress   | Decompress  | Ratio | Use Case           |
+| ----- | ---- | ---------- | ----------- | ----- | ------------------ |
+| 0     | None | N/A        | N/A         | 1.0x  | Already compressed |
+| 1     | LZ4  | 9.77 GiB/s | 38.12 GiB/s | ~2x   | Latency-sensitive  |
+| 2     | Zstd | 4.87 GiB/s | ~5.64 GiB/s | ~4-5x | Cold storage       |
 
-*Performance verified via docs/performance.md (2025-11-20)*
+_Performance verified via docs/performance.md (2025-11-20)_
 
 ### LZ4 Format
 
 **Compressed Data:**
+
 ```
 [size_prefix: 4 bytes][compressed_data: N bytes]
 ```
 
 **Size Prefix:**
+
 - 4-byte little-endian u32
 - Contains uncompressed size
 - Added by `compress_prepend_size()`
@@ -1089,6 +1163,7 @@ Compression is applied to page data (4032 bytes), not the entire page.
 **Total Size:** 4 + compressed_length
 
 **Compression:**
+
 ```rust
 use lz4_flex::compress_prepend_size;
 
@@ -1098,6 +1173,7 @@ let compressed = compress_prepend_size(data)?;
 ```
 
 **Decompression:**
+
 ```rust
 use lz4_flex::decompress_size_prepended;
 
@@ -1107,15 +1183,18 @@ let decompressed = decompress_size_prepended(&compressed)?;
 ### Zstd Format
 
 **Compressed Data:**
+
 ```
 [zstd_frame]
 ```
 
 **Frame Header:**
+
 - Zstd includes size information in frame
 - No separate size prefix needed
 
 **Compression:**
+
 ```rust
 use zstd::encode_all;
 
@@ -1123,6 +1202,7 @@ let compressed = encode_all(data.as_slice(), 3)?;  // level 3
 ```
 
 **Decompression:**
+
 ```rust
 use zstd::decode_all;
 
@@ -1132,17 +1212,19 @@ let decompressed = decode_all(compressed.as_slice())?;
 ### Compression Decision
 
 **Apply compression if:**
+
 1. Data size ≥ threshold
 2. Compression ratio < min_ratio
 
 **Thresholds:**
 
-| Algorithm | Min Size | Min Ratio | Rationale |
-|-----------|----------|-----------|-----------|
-| LZ4 | 512 bytes | 0.9 (10% savings) | Fast, so low threshold |
-| Zstd | 1024 bytes | 0.85 (15% savings) | Slower, needs more savings |
+| Algorithm | Min Size   | Min Ratio          | Rationale                  |
+| --------- | ---------- | ------------------ | -------------------------- |
+| LZ4       | 512 bytes  | 0.9 (10% savings)  | Fast, so low threshold     |
+| Zstd      | 1024 bytes | 0.85 (15% savings) | Slower, needs more savings |
 
 **Example:**
+
 ```rust
 let original_size = data.len();
 let compressed = compress_lz4(data);
@@ -1164,13 +1246,14 @@ if compressed.len() < original_size * 0.9 && original_size >= 512 {
 
 Stored in page header (offsets 33-42):
 
-| Offset | Size | Field | Description |
-|--------|------|-------|-------------|
-| 33 | 1 | compression | Method (0/1/2) |
-| 34 | 4 | original_size | Uncompressed size (bytes) |
-| 38 | 4 | compressed_size | Compressed size (bytes) |
+| Offset | Size | Field           | Description               |
+| ------ | ---- | --------------- | ------------------------- |
+| 33     | 1    | compression     | Method (0/1/2)            |
+| 34     | 4    | original_size   | Uncompressed size (bytes) |
+| 38     | 4    | compressed_size | Compressed size (bytes)   |
 
 **If `compression = 0`:**
+
 - `original_size` = actual data size
 - `compressed_size` = 0 (ignored)
 
@@ -1187,11 +1270,13 @@ Encryption is applied to page data (4032 bytes) **after** compression (if enable
 **AES-256-GCM (Galois/Counter Mode)**
 
 **Parameters:**
+
 - **Key Size:** 256 bits (32 bytes)
 - **Nonce Size:** 96 bits (12 bytes)
 - **Tag Size:** 128 bits (16 bytes)
 
 **Security:**
+
 - AEAD (Authenticated Encryption with Associated Data)
 - Prevents tampering and forgery
 - Hardware acceleration (AES-NI) on modern CPUs
@@ -1208,12 +1293,14 @@ Encryption is applied to page data (4032 bytes) **after** compression (if enable
 **Total:** 4032 bytes (fits in page data)
 
 **Breakdown:**
+
 - Nonce: 12 bytes
 - Ciphertext: original_size bytes
 - Auth Tag: 16 bytes
 - Padding: 4032 - (12 + original_size + 16) bytes (zeros)
 
 **Example (1KB plaintext):**
+
 ```
 Nonce:      12 bytes
 Ciphertext: 1024 bytes
@@ -1250,6 +1337,7 @@ fn derive_nonce(page_id: u64, counter: u32) -> [u8; 12] {
 ### Master Key
 
 **Storage:**
+
 - 32-byte master key (NOT stored in cartridge file)
 - Provided at runtime:
   - Environment variable: `CARTRIDGE_KEY=hex_string`
@@ -1257,6 +1345,7 @@ fn derive_nonce(page_id: u64, counter: u32) -> [u8; 12] {
   - Hardware key (YubiKey, TPM)
 
 **Key Generation:**
+
 ```rust
 use aes_gcm::aead::OsRng;
 use aes_gcm::aead::rand_core::RngCore;
@@ -1267,6 +1356,7 @@ println!("Master key (hex): {}", hex::encode(key));
 ```
 
 **Security:**
+
 - ⚠️ **Never commit keys to git**
 - ⚠️ **Never hardcode keys in source**
 - ✅ Use environment variables or hardware keys
@@ -1275,6 +1365,7 @@ println!("Master key (hex): {}", hex::encode(key));
 ### Encryption/Decryption
 
 **Encryption:**
+
 ```rust
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::aead::Aead;
@@ -1298,6 +1389,7 @@ fn encrypt_page(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
 ```
 
 **Decryption:**
+
 ```rust
 fn decrypt_page(encrypted: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
     if encrypted.len() < 12 + 16 {
@@ -1318,11 +1410,13 @@ fn decrypt_page(encrypted: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
 ### Authentication Tag
 
 **Purpose:**
+
 - Verifies ciphertext integrity
 - Detects tampering or corruption
 - Prevents forgery attacks
 
 **Verification:**
+
 - Automatically checked during decryption
 - Decryption failure indicates:
   1. Wrong key
@@ -1330,6 +1424,7 @@ fn decrypt_page(encrypted: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
   3. Tampered data
 
 **Handling Decryption Failures:**
+
 ```rust
 match decrypt_page(encrypted, key) {
     Ok(plaintext) => { /* success */ }
@@ -1343,11 +1438,13 @@ match decrypt_page(encrypted, key) {
 ### Encryption Performance
 
 **Overhead:**
+
 - Encryption: Minimal (hardware AES acceleration)
 - Decryption: Minimal
 - Storage: 28 bytes per page (12 nonce + 16 tag)
 
 **Future Optimization (v0.3):**
+
 - Deterministic nonces → Save 12 bytes per page
 - Per-file keys (derived from master) → Better key isolation
 
@@ -1364,6 +1461,7 @@ IAM (Identity and Access Management) policies control access to files.
 ### Policy Structure
 
 **JSON Schema:**
+
 ```json
 {
   "version": "2012-10-17",
@@ -1389,12 +1487,13 @@ IAM (Identity and Access Management) policies control access to files.
 
 ### Effect Values
 
-| Value | Description | Precedence |
-|-------|-------------|------------|
-| Allow | Grant access | Low |
-| Deny | Deny access | **High** (overrides Allow) |
+| Value | Description  | Precedence                 |
+| ----- | ------------ | -------------------------- |
+| Allow | Grant access | Low                        |
+| Deny  | Deny access  | **High** (overrides Allow) |
 
 **Evaluation Order:**
+
 1. Check all Deny statements first
 2. If any Deny matches → **Deny access**
 3. Otherwise, check Allow statements
@@ -1403,22 +1502,24 @@ IAM (Identity and Access Management) policies control access to files.
 
 ### Action Values
 
-| Value | Description | Maps To |
-|-------|-------------|---------|
-| Read | Read file content | `cart.read()` |
-| Write | Modify file content | `cart.write()`, `cart.update()` |
-| Create | Create new files | `cart.create_file()` |
-| Delete | Delete files | `cart.delete()` |
-| List | List directory contents | `cart.list()` |
-| All | All actions (wildcard) | * |
+| Value  | Description             | Maps To                         |
+| ------ | ----------------------- | ------------------------------- |
+| Read   | Read file content       | `cart.read()`                   |
+| Write  | Modify file content     | `cart.write()`, `cart.update()` |
+| Create | Create new files        | `cart.create_file()`            |
+| Delete | Delete files            | `cart.delete()`                 |
+| List   | List directory contents | `cart.list()`                   |
+| All    | All actions (wildcard)  | \*                              |
 
 ### Resource Patterns
 
 **Wildcards:**
+
 - `*` - Match single path segment
 - `**` - Match multiple segments (recursive)
 
 **Examples:**
+
 ```
 /config.json         → Exact match
 /docs/*.md           → All markdown files in /docs
@@ -1428,6 +1529,7 @@ IAM (Identity and Access Management) policies control access to files.
 ```
 
 **Matching Algorithm:**
+
 ```rust
 fn matches_pattern(path: &str, pattern: &str) -> bool {
     let path_parts: Vec<&str> = path.split('/').collect();
@@ -1458,17 +1560,18 @@ fn match_parts(path: &[&str], pattern: &[&str]) -> bool {
 
 **Operators:**
 
-| Operator | Type | Example |
-|----------|------|---------|
-| StringEquals | String | `path == "/admin/config.json"` |
-| StringNotEquals | String | `path != "/tmp/**"` |
-| NumericEquals | Number | `file_size == 1024` |
-| NumericLessThan | Number | `file_size < 1048576` |
-| NumericGreaterThan | Number | `file_size > 0` |
-| DateBefore | Timestamp | `timestamp < 1700000000000000` |
-| DateAfter | Timestamp | `timestamp > 1700000000000000` |
+| Operator           | Type      | Example                        |
+| ------------------ | --------- | ------------------------------ |
+| StringEquals       | String    | `path == "/admin/config.json"` |
+| StringNotEquals    | String    | `path != "/tmp/**"`            |
+| NumericEquals      | Number    | `file_size == 1024`            |
+| NumericLessThan    | Number    | `file_size < 1048576`          |
+| NumericGreaterThan | Number    | `file_size > 0`                |
+| DateBefore         | Timestamp | `timestamp < 1700000000000000` |
+| DateAfter          | Timestamp | `timestamp > 1700000000000000` |
 
 **Example:**
+
 ```json
 {
   "effect": "Deny",
@@ -1482,11 +1585,12 @@ fn match_parts(path: &[&str], pattern: &[&str]) -> bool {
 }
 ```
 
-**Interpretation:** Deny writes to /logs/** if file size > 100 MB
+**Interpretation:** Deny writes to /logs/\*\* if file size > 100 MB
 
 ### Policy Evaluation
 
 **Algorithm:**
+
 ```rust
 fn evaluate_policy(policy: &Policy, action: Action, resource: &str) -> Decision {
     // Step 1: Check Deny statements first
@@ -1523,13 +1627,14 @@ fn matches_statement(stmt: &Statement, action: Action, resource: &str) -> bool {
 
 **Cached Evaluation:**
 
-| Operation | Latency | Throughput |
-|-----------|---------|------------|
-| Evaluate (cached) | 5 μs | 1,000,000+ evals/sec |
-| Evaluate (uncached) | 50 μs | 50,000+ evals/sec |
-| Pattern Compile | N/A | N/A (done at load time) |
+| Operation           | Latency | Throughput              |
+| ------------------- | ------- | ----------------------- |
+| Evaluate (cached)   | 5 μs    | 1,000,000+ evals/sec    |
+| Evaluate (uncached) | 50 μs   | 50,000+ evals/sec       |
+| Pattern Compile     | N/A     | N/A (done at load time) |
 
 **Cache Key:**
+
 ```rust
 cache_key = (action, resource_path)
 ```
@@ -1541,11 +1646,13 @@ cache_key = (action, resource_path)
 **Location:** NOT stored in cartridge file (stored separately)
 
 **Options:**
+
 1. **External file:** `/path/to/policies/my-data.policy.json`
 2. **Engram manifest:** Included in `manifest.toml` when frozen
 3. **Runtime:** Loaded via API
 
 **Example:**
+
 ```rust
 use cartridge_rs::Policy;
 
@@ -1586,7 +1693,7 @@ snapshots/
   "name": "v1",
   "description": "First version before major refactor",
   "created_at": 1700000000000000,
-  "parent_path": "/path/to/cartridge.cart",
+  "parent_path": "/path/to/cartridge-rs.cart",
   "header": {
     "magic": [67, 65, 82, 84, 0, 2, 0, 0],
     "version_major": 2,
@@ -1612,6 +1719,7 @@ snapshots/
 ### Snapshot Pages (pages.bin)
 
 **Binary Format:**
+
 ```
 [page_count: u64]
 [page_entry_1]
@@ -1621,11 +1729,13 @@ snapshots/
 ```
 
 **Page Entry:**
+
 ```
 [page_id: u64][page_size: u64][page_data: u8[page_size]]
 ```
 
 **Example (2 pages):**
+
 ```
 Offset 0: page_count = 2 (8 bytes, little-endian)
 
@@ -1645,6 +1755,7 @@ Total: 8 + (8 + 8 + 4096) * 2 = 8232 bytes
 ### Snapshot Creation
 
 **API:**
+
 ```rust
 let snapshot_id = cart.create_snapshot("v1", "Before refactor")?;
 println!("Snapshot ID: {}", snapshot_id);
@@ -1652,6 +1763,7 @@ println!("Snapshot ID: {}", snapshot_id);
 ```
 
 **Process:**
+
 1. Flush all dirty pages to disk
 2. Create snapshot directory (`snapshots/snapshot_{id}/`)
 3. Copy modified pages to `pages.bin`
@@ -1659,6 +1771,7 @@ println!("Snapshot ID: {}", snapshot_id);
 5. Return snapshot ID
 
 **Copy-on-Write:**
+
 - Only modified pages are copied (not entire cartridge)
 - Unchanged pages: shared with original
 - Space savings: 90%+ for typical edits
@@ -1666,12 +1779,14 @@ println!("Snapshot ID: {}", snapshot_id);
 ### Snapshot Restoration
 
 **API:**
+
 ```rust
 cart.restore_snapshot(1700000000000000)?;
 println!("Restored to snapshot v1");
 ```
 
 **Process:**
+
 1. Load snapshot metadata
 2. Verify snapshot exists and is valid
 3. Restore header from snapshot
@@ -1679,12 +1794,14 @@ println!("Restored to snapshot v1");
 5. Flush changes to disk
 
 **Destructive:**
+
 - Current state is lost (unless snapshotted first)
 - Recommendation: Create snapshot before restoring
 
 ### Snapshot Listing
 
 **API:**
+
 ```rust
 let snapshots = cart.list_snapshots()?;
 for snapshot in snapshots {
@@ -1693,6 +1810,7 @@ for snapshot in snapshots {
 ```
 
 **Output:**
+
 ```
 1700000000000000: v1 (Before refactor)
 1700000001000000: v2 (After refactor)
@@ -1702,12 +1820,14 @@ for snapshot in snapshots {
 ### Snapshot Deletion
 
 **API:**
+
 ```rust
 cart.delete_snapshot(1700000000000000)?;
 println!("Deleted snapshot v1");
 ```
 
 **Process:**
+
 1. Delete snapshot directory
 2. Remove metadata and pages files
 3. Update snapshot index
@@ -1716,14 +1836,15 @@ println!("Deleted snapshot v1");
 
 **Benchmark (10 files, 1KB each):**
 
-| Operation | Latency | Throughput |
-|-----------|---------|------------|
-| Create Snapshot | ~5 ms | 200 snapshots/sec |
-| Restore Snapshot | ~8 ms | 125 restores/sec |
-| List Snapshots | ~100 μs | 10,000 lists/sec |
-| Delete Snapshot | ~2 ms | 500 deletes/sec |
+| Operation        | Latency | Throughput        |
+| ---------------- | ------- | ----------------- |
+| Create Snapshot  | ~5 ms   | 200 snapshots/sec |
+| Restore Snapshot | ~8 ms   | 125 restores/sec  |
+| List Snapshots   | ~100 μs | 10,000 lists/sec  |
+| Delete Snapshot  | ~2 ms   | 500 deletes/sec   |
 
 **Storage Overhead:**
+
 - Metadata: ~2-5 KB per snapshot
 - Pages: 4096 bytes × (number of modified pages)
 - Typical: 10-50 KB per snapshot (for small edits)
@@ -1737,6 +1858,7 @@ println!("Deleted snapshot v1");
 Cartridge implements a **SQLite Virtual File System (VFS)** allowing SQLite databases to run **inside** cartridges.
 
 **Benefits:**
+
 - Single-file distribution (database + files together)
 - Offline-first (no network dependencies)
 - Compression and encryption for database files
@@ -1755,6 +1877,7 @@ Cartridge Storage
 ```
 
 **Mapping:**
+
 - SQLite database file → Cartridge internal path
 - Journal/WAL files → Separate paths in cartridge
 - Temp files → In-memory or cartridge paths
@@ -1762,6 +1885,7 @@ Cartridge Storage
 ### VFS Registration
 
 **API:**
+
 ```rust
 use rusqlite::{Connection, OpenFlags};
 use cartridge_rs::vfs::register_vfs;
@@ -1779,11 +1903,13 @@ conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", [])?;
 ```
 
 **URI Format:**
+
 ```
 file:{db_path}?vfs=cartridge&cartridge={cartridge_path}
 ```
 
 **Parameters:**
+
 - `db_path`: Path to database inside cartridge (e.g., `/db/mydb.db`)
 - `cartridge`: Path to cartridge file (e.g., `my-data.cart`)
 
@@ -1791,23 +1917,24 @@ file:{db_path}?vfs=cartridge&cartridge={cartridge_path}
 
 **Implemented Operations:**
 
-| Operation | SQLite xMethod | Cartridge Mapping |
-|-----------|---------------|-------------------|
-| Open | `xOpen` | `cart.create_file()` or `cart.open()` |
-| Close | `xClose` | Flush buffers |
-| Read | `xRead` | `cart.read()` with offset/length |
-| Write | `xWrite` | `cart.write()` with offset/length |
-| Truncate | `xTruncate` | Resize file |
-| Sync | `xSync` | Flush to disk |
-| File Size | `xFileSize` | `cart.metadata().size` |
-| Lock | `xLock` | In-memory lock (single process) |
-| Unlock | `xUnlock` | Release lock |
-| Check Reserved Lock | `xCheckReservedLock` | Check lock state |
-| File Control | `xFileControl` | Pass-through |
-| Sector Size | `xSectorSize` | Return 4096 |
-| Device Characteristics | `xDeviceCharacteristics` | Return flags |
+| Operation              | SQLite xMethod           | Cartridge Mapping                     |
+| ---------------------- | ------------------------ | ------------------------------------- |
+| Open                   | `xOpen`                  | `cart.create_file()` or `cart.open()` |
+| Close                  | `xClose`                 | Flush buffers                         |
+| Read                   | `xRead`                  | `cart.read()` with offset/length      |
+| Write                  | `xWrite`                 | `cart.write()` with offset/length     |
+| Truncate               | `xTruncate`              | Resize file                           |
+| Sync                   | `xSync`                  | Flush to disk                         |
+| File Size              | `xFileSize`              | `cart.metadata().size`                |
+| Lock                   | `xLock`                  | In-memory lock (single process)       |
+| Unlock                 | `xUnlock`                | Release lock                          |
+| Check Reserved Lock    | `xCheckReservedLock`     | Check lock state                      |
+| File Control           | `xFileControl`           | Pass-through                          |
+| Sector Size            | `xSectorSize`            | Return 4096                           |
+| Device Characteristics | `xDeviceCharacteristics` | Return flags                          |
 
 **Unsupported (Future):**
+
 - Memory-mapped I/O (`xShmMap`, `xShmLock`) - Future v0.3
 - Shared memory - Future (multi-process support)
 
@@ -1815,11 +1942,11 @@ file:{db_path}?vfs=cartridge&cartridge={cartridge_path}
 
 **Throughput:**
 
-| Operation | Cartridge VFS | Native Filesystem | Ratio |
-|-----------|---------------|-------------------|-------|
-| Read (cached) | ~18 GiB/s | ~20 GiB/s | 0.9x |
-| Write | ~9 GiB/s | ~10 GiB/s | 0.9x |
-| Latency (4KB) | ~280 ns | ~200 ns | 1.4x |
+| Operation     | Cartridge VFS | Native Filesystem | Ratio |
+| ------------- | ------------- | ----------------- | ----- |
+| Read (cached) | ~18 GiB/s     | ~20 GiB/s         | 0.9x  |
+| Write         | ~9 GiB/s      | ~10 GiB/s         | 0.9x  |
+| Latency (4KB) | ~280 ns       | ~200 ns           | 1.4x  |
 
 **Conclusion:** Cartridge VFS achieves ~90% of native filesystem performance.
 
@@ -1828,17 +1955,20 @@ file:{db_path}?vfs=cartridge&cartridge={cartridge_path}
 **Current (v0.2.x):** Single-process only
 
 **Locking:**
+
 - In-memory lock table
 - SQLite locking protocol supported
 - No inter-process locking (IPC)
 
 **Future (v0.3):** Multi-process support via:
+
 - File-based locking (`flock`, `LockFileEx`)
 - Shared memory for lock coordination
 
 ### Example: SQLite in Cartridge
 
 **Full Example:**
+
 ```rust
 use rusqlite::{Connection, OpenFlags};
 use cartridge_rs::{Cartridge, vfs::register_vfs};
@@ -1886,10 +2016,12 @@ fn main() -> anyhow::Result<()> {
 ### VFS Safety
 
 **Unsafe Code:**
+
 - VFS implementation uses FFI (C interface to SQLite)
 - 29 unsafe blocks in `src/vfs/*.rs` (see TESTING_PLAN.md)
 
 **Testing (Critical):**
+
 - Fuzzing required for VFS operations (see TESTING_PLAN.md Phase 1)
 - Crash recovery testing
 - Concurrent access validation
@@ -1903,6 +2035,7 @@ fn main() -> anyhow::Result<()> {
 **Engram Freezing** converts a mutable Cartridge container into an **immutable, cryptographically signed Engram archive**.
 
 **Use Case:**
+
 - Distribute read-only datasets
 - Create verifiable backups
 - Compliance (tamper-proof records)
@@ -1913,17 +2046,18 @@ fn main() -> anyhow::Result<()> {
 
 **Key Differences:**
 
-| Feature | Cartridge | Engram |
-|---------|-----------|--------|
-| Mutability | Mutable | Immutable |
-| Signatures | None | Ed25519 signatures |
-| Compression | Optional | Required (LZ4 or Zstd) |
-| Auto-Growth | Yes | No (fixed size) |
-| Format | `.cart` | `.eng` |
+| Feature     | Cartridge | Engram                 |
+| ----------- | --------- | ---------------------- |
+| Mutability  | Mutable   | Immutable              |
+| Signatures  | None      | Ed25519 signatures     |
+| Compression | Optional  | Required (LZ4 or Zstd) |
+| Auto-Growth | Yes       | No (fixed size)        |
+| Format      | `.cart`   | `.eng`                 |
 
 ### Freezing API
 
 **Basic Freezing:**
+
 ```rust
 use cartridge_rs::engram_integration::EngramFreezer;
 
@@ -1939,6 +2073,7 @@ freezer.freeze(&cart, "my-data.eng")?;
 ```
 
 **With Custom Manifest:**
+
 ```rust
 use cartridge_rs::engram_integration::EngramFreezer;
 use engram_rs::Manifest;
@@ -1961,6 +2096,7 @@ freezer.freeze(&cart, "my-data-v2.eng")?;
 ### Freeze Process
 
 **Steps:**
+
 1. Read all files from cartridge
 2. Compress each file (LZ4 or Zstd, based on settings)
 3. Build Engram central directory
@@ -1969,6 +2105,7 @@ freezer.freeze(&cart, "my-data-v2.eng")?;
 6. Write Engram archive to disk
 
 **Compression:**
+
 - LZ4: Fast (9.77 GiB/s), moderate ratio (~2x)
 - Zstd: Slower (4.87 GiB/s), better ratio (~4-5x)
 
@@ -1977,21 +2114,23 @@ freezer.freeze(&cart, "my-data-v2.eng")?;
 **Benchmark (1000 files, 512 bytes each):**
 
 | File Count | File Size | Total Size | Freeze Time | Throughput |
-|------------|-----------|------------|-------------|------------|
-| 10 | 1 KB | 10 KB | ~5 ms | 2 MB/s |
-| 100 | 1 KB | 100 KB | ~15 ms | 6.7 MB/s |
-| 1000 | 512 B | 512 KB | ~50 ms | 10 MB/s |
+| ---------- | --------- | ---------- | ----------- | ---------- |
+| 10         | 1 KB      | 10 KB      | ~5 ms       | 2 MB/s     |
+| 100        | 1 KB      | 100 KB     | ~15 ms      | 6.7 MB/s   |
+| 1000       | 512 B     | 512 KB     | ~50 ms      | 10 MB/s    |
 
 **Note:** Dominated by compression overhead, not I/O
 
 ### Signature Verification
 
 **Engram archives include:**
+
 - Manifest (metadata + signature)
 - Central directory (file list + checksums)
 - File data (compressed)
 
 **Verification:**
+
 ```rust
 use engram_rs::Engram;
 
@@ -2003,6 +2142,7 @@ println!("Verified: {} v{}", manifest.slug, manifest.version);
 ### Use Cases
 
 **1. Dataset Distribution:**
+
 ```
 my-dataset.cart (mutable, 10 GB)
   ↓ freeze
@@ -2012,6 +2152,7 @@ Users verify signature and extract
 ```
 
 **2. Compliance Archives:**
+
 ```
 audit-logs-2025.cart (mutable)
   ↓ freeze (end of year)
@@ -2019,6 +2160,7 @@ audit-logs-2025.eng (immutable, signed, tamper-proof)
 ```
 
 **3. Snapshot + Freeze:**
+
 ```
 project.cart
   ↓ snapshot ("v1.0")
@@ -2041,6 +2183,7 @@ project-v1.0.eng (immutable release)
 **Location:** Separate pages in cartridge (Page Type: AuditLog = 4)
 
 **Entry Format:**
+
 ```rust
 struct AuditLogEntry {
     timestamp: u64,        // Microseconds since epoch
@@ -2054,12 +2197,14 @@ struct AuditLogEntry {
 ### Audit Log Page
 
 **Format:**
+
 ```
 Page Type: AuditLog (4)
 Data: [JSON array of AuditLogEntry]
 ```
 
 **Example:**
+
 ```json
 [
   {
@@ -2089,6 +2234,7 @@ Data: [JSON array of AuditLogEntry]
 ### Enable Audit Logging
 
 **API:**
+
 ```rust
 use cartridge_rs::CartridgeBuilder;
 
@@ -2100,11 +2246,13 @@ let cart = CartridgeBuilder::new()
 ```
 
 **Feature Flag:**
+
 - Header flags bit 3 = AUDIT_LOG
 
 ### Audit Log API
 
 **Query Logs:**
+
 ```rust
 let logs = cart.audit_logs()?;
 for log in logs {
@@ -2114,6 +2262,7 @@ for log in logs {
 ```
 
 **Filter by Date:**
+
 ```rust
 let start = 1700000000000000;
 let end = 1700100000000000;
@@ -2121,6 +2270,7 @@ let logs = cart.audit_logs_range(start, end)?;
 ```
 
 **Filter by Operation:**
+
 ```rust
 let writes = cart.audit_logs_by_operation(Operation::Write)?;
 ```
@@ -2128,11 +2278,13 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 ### Audit Log Performance
 
 **Overhead:**
+
 - Write operation: +1-2% latency
 - Async logging: Minimal impact
 - Throughput: 20,000+ logs/sec (verified in ARCHITECTURE.md)
 
 **Storage:**
+
 - ~100-200 bytes per log entry (JSON)
 - 10,000 entries ≈ 1-2 MB
 - Rotation: Optional (future feature)
@@ -2142,6 +2294,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 **Strategy:** Rotate when log page is full
 
 **Options:**
+
 1. **Archive:** Move old logs to separate archive
 2. **Delete:** Delete oldest logs (keep last N entries)
 3. **Freeze:** Freeze logs to Engram archive
@@ -2154,46 +2307,47 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 
 **File I/O Throughput (64KB blocks):**
 
-| Operation | Mean | Upper Bound | Latency (P50) |
-|-----------|------|-------------|---------------|
-| Read | 17.91 GiB/s | 18.38 GiB/s | 3.41 μs |
-| Write | 9.41 GiB/s | 9.59 GiB/s | 6.48 μs |
+| Operation | Mean        | Upper Bound | Latency (P50) |
+| --------- | ----------- | ----------- | ------------- |
+| Read      | 17.91 GiB/s | 18.38 GiB/s | 3.41 μs       |
+| Write     | 9.41 GiB/s  | 9.59 GiB/s  | 6.48 μs       |
 
-*Source: docs/performance.md (2025-11-20), verified in PERFORMANCE_VERIFICATION.md*
+_Source: docs/performance.md (2025-11-20), verified in PERFORMANCE_VERIFICATION.md_
 
 **Compression Performance (64KB blocks):**
 
-| Algorithm | Compress | Decompress | Ratio |
-|-----------|----------|------------|-------|
-| LZ4 | 9.77 GiB/s | 38.12 GiB/s | ~2x |
-| Zstd | 4.87 GiB/s | ~5.64 GiB/s | ~4-5x |
+| Algorithm | Compress   | Decompress  | Ratio |
+| --------- | ---------- | ----------- | ----- |
+| LZ4       | 9.77 GiB/s | 38.12 GiB/s | ~2x   |
+| Zstd      | 4.87 GiB/s | ~5.64 GiB/s | ~4-5x |
 
-*Source: docs/performance.md, verified*
+_Source: docs/performance.md, verified_
 
 **Allocation Performance:**
 
-| Allocator | Operation | Latency | Throughput |
-|-----------|-----------|---------|------------|
-| Bitmap | 100K blocks | 4.15 ms | 24,096 blocks/ms |
-| Extent | 100K blocks | 576 μs | 173,611 blocks/ms |
-| Hybrid (small) | 100 allocations | 4.99 μs/allocation | N/A |
-| Hybrid (large) | 100 allocations | 7.16 μs/allocation | N/A |
+| Allocator      | Operation       | Latency            | Throughput        |
+| -------------- | --------------- | ------------------ | ----------------- |
+| Bitmap         | 100K blocks     | 4.15 ms            | 24,096 blocks/ms  |
+| Extent         | 100K blocks     | 576 μs             | 173,611 blocks/ms |
+| Hybrid (small) | 100 allocations | 4.99 μs/allocation | N/A               |
+| Hybrid (large) | 100 allocations | 7.16 μs/allocation | N/A               |
 
-*Source: docs/performance.md*
+_Source: docs/performance.md_
 
 **Buffer Pool (ARC) Performance:**
 
-| Pool Size | Get (hit) | Put | Miss |
-|-----------|-----------|-----|------|
-| 100 | 20.37 μs | 24.98 μs | 3.26 ns |
-| 1,000 | 255.0 μs | 285.7 μs | 3.26 ns |
-| 10,000 | 6.10 ms | 6.11 ms | 3.81 ns |
+| Pool Size | Get (hit) | Put      | Miss    |
+| --------- | --------- | -------- | ------- |
+| 100       | 20.37 μs  | 24.98 μs | 3.26 ns |
+| 1,000     | 255.0 μs  | 285.7 μs | 3.26 ns |
+| 10,000    | 6.10 ms   | 6.11 ms  | 3.81 ns |
 
-*Source: docs/performance.md*
+_Source: docs/performance.md_
 
 ### Unverified Claims
 
 **Auto-Growth Overhead:**
+
 - **Claimed:** < 1ms per doubling (README.md)
 - **Status:** ❌ No benchmark exists (see PERFORMANCE_VERIFICATION.md)
 - **Recommendation:** Add `benches/auto_growth_performance.rs`
@@ -2201,16 +2355,19 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 ### Scalability
 
 **File Count:**
+
 - Maximum (v0.2.x): 10,000-50,000 files (single-page catalog limit)
 - Recommended: < 10,000 files for optimal performance
 - Future (v0.3): Millions (multi-page B-tree)
 
 **Cartridge Size:**
+
 - Minimum: 12 KB (3 blocks)
 - Maximum: 2^64 blocks = 18.4 exabytes (theoretical)
 - Practical: Limited by filesystem (e.g., ext4: 16 TB)
 
 **Concurrency:**
+
 - Readers: Multiple simultaneous (RwLock)
 - Writers: Exclusive access (RwLock)
 - Performance: 10,000+ reads/sec/core (with ARC cache)
@@ -2225,6 +2382,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 **Status:** Production
 
 **Features:**
+
 - Auto-growth containers (3 → 6 → 12 → ... blocks)
 - Slug/title manifest system
 - All v0.1 features (compression, encryption, IAM, snapshots)
@@ -2235,6 +2393,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 - ARC buffer pool
 
 **Performance:**
+
 - Read: 17.91 GiB/s (verified)
 - Write: 9.41 GiB/s (verified)
 - LZ4 Compression: 9.77 GiB/s (verified)
@@ -2249,6 +2408,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 **Status:** Deprecated (use v0.2.4)
 
 **Changes:**
+
 - Iterative improvements to auto-growth
 - Bug fixes in manifest system
 - Performance optimizations
@@ -2259,6 +2419,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 **Status:** Legacy (superseded by v0.2)
 
 **Features:**
+
 - Fixed-size containers (no auto-growth)
 - No slug/title (unnamed cartridges)
 - Basic compression, encryption, IAM, snapshots
@@ -2266,6 +2427,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 - Bitmap allocator only
 
 **Limitations:**
+
 - Required upfront capacity planning
 - Catalog limited to ~10 files
 - No SQLite VFS
@@ -2276,6 +2438,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 **Target:** Q2 2026
 
 **Planned Features:**
+
 - **Multi-page B-tree catalog** (scale to millions of files)
 - **Binary serialization** (replace JSON)
 - **WAL (Write-Ahead Log)** for crash recovery
@@ -2285,6 +2448,7 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 - **Multi-process support** (shared memory locks)
 
 **Breaking Changes:**
+
 - Catalog format (v0.2 → v0.3 migration required)
 - Allocator format (binary instead of JSON)
 
@@ -2295,11 +2459,13 @@ let writes = cart.audit_logs_by_operation(Operation::Write)?;
 ### Forward Compatibility
 
 **v0.2 readers must:**
+
 1. Ignore unknown reserved bytes (treat as zeros)
 2. Check `version_major` for compatibility
 3. Support older `version_minor` within same major version
 
 **Example:**
+
 ```rust
 fn is_compatible(header: &CartridgeHeader) -> bool {
     header.version_major == 2 && header.version_minor <= 4
@@ -2309,10 +2475,12 @@ fn is_compatible(header: &CartridgeHeader) -> bool {
 ### Backward Compatibility
 
 **v0.2.4 can read:**
+
 - ✅ v0.2.0, v0.2.1, v0.2.2, v0.2.3 (full compatibility)
 - ⚠️ v0.1.0 (read-only, upgrade required for write)
 
 **v0.1 → v0.2 Differences:**
+
 - Magic byte 5: `0x01` → `0x02`
 - Slug/title fields added (offsets 40-551)
 - Growth metadata added (offsets 552-583)
@@ -2322,6 +2490,7 @@ fn is_compatible(header: &CartridgeHeader) -> bool {
 **v0.1 → v0.2:**
 
 **Step 1: Detect Version**
+
 ```rust
 fn detect_version(path: &str) -> Result<u8> {
     let mut file = File::open(path)?;
@@ -2337,6 +2506,7 @@ fn detect_version(path: &str) -> Result<u8> {
 ```
 
 **Step 2: Migrate**
+
 ```rust
 use cartridge_rs::migration::migrate_v1_to_v2;
 
@@ -2344,6 +2514,7 @@ migrate_v1_to_v2("old.cart", "new.cart", "my-data", "My Data")?;
 ```
 
 **Migration Process:**
+
 1. Read v0.1 file (all pages)
 2. Parse JSON catalog and allocator
 3. Create v0.2 header with slug/title
@@ -2351,6 +2522,7 @@ migrate_v1_to_v2("old.cart", "new.cart", "my-data", "My Data")?;
 5. Verify migration (compare file contents)
 
 **Tool:**
+
 ```bash
 cargo install cartridge-migrate
 cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Data"
@@ -2359,16 +2531,19 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 ### Cross-Platform Compatibility
 
 **Supported Platforms:**
+
 - ✅ Windows (NTFS, ReFS)
 - ✅ Linux (ext4, btrfs, xfs)
 - ✅ macOS (APFS, HFS+)
 - ✅ BSD (UFS, ZFS)
 
 **Byte Order:**
+
 - Little-endian (x86, x86_64, ARM, AArch64)
 - No support for big-endian (PowerPC, SPARC) - conversion required
 
 **Path Separators:**
+
 - Internal: Unix-style forward slashes (`/dir/file.txt`)
 - External (OS): Converted automatically (`C:\dir\file.txt` on Windows)
 
@@ -2379,6 +2554,7 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 ### Example 1: Minimal Cartridge (v0.2)
 
 **Header (Page 0):**
+
 ```
 00000000: 43 41 52 54 00 02 00 00  02 00 04 00 00 10 00 00  CART............
 00000010: 03 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
@@ -2388,6 +2564,7 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 ```
 
 **Decoded:**
+
 - Magic: "CART\x00\x02\x00\x00" (v0.2)
 - Version: 2.4
 - Block size: 4096
@@ -2400,6 +2577,7 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 ### Example 2: Content Page (Compressed)
 
 **Page 3:**
+
 ```
 00000000: 02 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
 00000010: 00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
@@ -2409,6 +2587,7 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 ```
 
 **Decoded:**
+
 - Page type: 2 (ContentData)
 - Checksum: all zeros (disabled)
 - Compression: 1 (LZ4)
@@ -2425,6 +2604,7 @@ cartridge-migrate --input v1.cart --output v2.cart --slug my-data --title "My Da
 For implementing a Cartridge v0.2 reader/writer:
 
 **Header (v0.2):**
+
 - [ ] Verify magic number `"CART\x00\x02\x00\x00"`
 - [ ] Check version compatibility (major=2, minor≤4)
 - [ ] Validate block_size == 4096
@@ -2435,6 +2615,7 @@ For implementing a Cartridge v0.2 reader/writer:
 - [ ] Read timestamps, growth_count, flags
 
 **Pages:**
+
 - [ ] Read/write 4KB pages
 - [ ] Parse page headers (type, checksum, compression, encryption)
 - [ ] Compute/verify SHA-256 checksums (if enabled)
@@ -2442,24 +2623,28 @@ For implementing a Cartridge v0.2 reader/writer:
 - [ ] Decrypt AES-256-GCM data (if encrypted)
 
 **Catalog:**
+
 - [ ] Deserialize B-tree from page 1 (JSON for v0.2)
 - [ ] Lookup files by path (O(log n))
 - [ ] Insert/update/delete entries
 - [ ] Handle directories (virtual, no blocks)
 
 **Allocator:**
+
 - [ ] Deserialize hybrid allocator from page 2 (JSON for v0.2)
 - [ ] Allocate blocks (bitmap for <256KB, extent for ≥256KB)
 - [ ] Free blocks (update bitmap and extents)
 - [ ] Track free_blocks count
 
 **Auto-Growth:**
+
 - [ ] Detect low space (free_blocks < threshold)
 - [ ] Double total_blocks
 - [ ] Expand file with `set_len()`
 - [ ] Update header and allocator
 
 **Optional Features:**
+
 - [ ] Compression (LZ4/Zstd)
 - [ ] Encryption (AES-256-GCM)
 - [ ] IAM policy evaluation
@@ -2473,6 +2658,7 @@ For implementing a Cartridge v0.2 reader/writer:
 ## Appendix C: References
 
 **Related Specifications:**
+
 - Engram Format: `engram-rs/SPECIFICATION.md`
 - Cartridge Architecture: `docs/ARCHITECTURE.md`
 - Performance Benchmarks: `docs/performance.md`
@@ -2480,6 +2666,7 @@ For implementing a Cartridge v0.2 reader/writer:
 - Performance Verification: `PERFORMANCE_VERIFICATION.md`
 
 **External Standards:**
+
 - SQLite VFS API: https://www.sqlite.org/vfs.html
 - AES-256-GCM: NIST SP 800-38D
 - Ed25519 Signatures: RFC 8032
@@ -2487,9 +2674,10 @@ For implementing a Cartridge v0.2 reader/writer:
 - Zstd Compression: https://facebook.github.io/zstd/
 
 **Source Code:**
-- GitHub: https://github.com/blackfall-labs/cartridge
-- Crates.io: https://crates.io/crates/cartridge-rs
-- Documentation: https://docs.rs/cartridge-rs
+
+- GitHub: https://github.com/blackfall-labs/cartridge-rs
+- Crates.io: https://crates.io/crates/cartridge-rs-rs
+- Documentation: https://docs.rs/cartridge-rs-rs
 
 ---
 

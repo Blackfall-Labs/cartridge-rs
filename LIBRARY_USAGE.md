@@ -9,13 +9,13 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 # High-level API (recommended for most users)
-cartridge-rs = { git = "https://github.com/manifest-humanity/cartridge", branch = "main" }
+cartridge-rs = { git = "https://github.com/blackfall-labs/cartridge-rs", branch = "main" }
 
 # Low-level API (for advanced use cases)
-# cartridge-core = { git = "https://github.com/manifest-humanity/cartridge", branch = "main" }
+# cartridge-core = { git = "https://github.com/blackfall-labs/cartridge-rs", branch = "main" }
 
 # S3 server functionality (optional)
-# cartridge-s3 = { git = "https://github.com/manifest-humanity/cartridge", branch = "main" }
+# cartridge-s3 = { git = "https://github.com/blackfall-labs/cartridge-rs", branch = "main" }
 ```
 
 ## Which Crate Should I Use?
@@ -38,6 +38,7 @@ The repository automatically uses your system's git credentials when fetching de
 Cartridge exposes a clean, controlled API surface. Only the following modules are public:
 
 ### Core Modules
+
 - `cartridge` - Main `Cartridge` struct for archive operations
 - `error` - Error types (`CartridgeError`, `Result`)
 - `header` - Archive header inspection (`Header`, `PAGE_SIZE`)
@@ -45,6 +46,7 @@ Cartridge exposes a clean, controlled API surface. Only the following modules ar
 - `io` - Advanced file operations (`CartridgeFile`)
 
 ### Feature Modules
+
 - `iam` - IAM policy engine for access control
 - `snapshot` - Copy-on-write snapshots
 - `vfs` - SQLite VFS integration
@@ -54,7 +56,9 @@ Cartridge exposes a clean, controlled API surface. Only the following modules ar
 - `allocator` - Block allocation strategies (for extensibility)
 
 ### Internal Modules (Not Public)
+
 The following are **implementation details** and cannot be imported:
+
 - `buffer_pool` - ARC caching (reserved for future use)
 - `compression` - LZ4/Zstd compression logic (internal)
 - `encryption` - AES-256-GCM encryption logic (internal)
@@ -417,7 +421,7 @@ cargo doc --open --no-deps -p cartridge-core
 ## Getting Help
 
 - **Documentation**: See [`docs/`](docs/) directory
-- **Issues**: [GitHub Issues](https://github.com/manifest-humanity/cartridge/issues)
+- **Issues**: [GitHub Issues](https://github.com/blackfall-labs/cartridge-rs/issues)
 - **Examples**: [`examples/`](examples/) directory
 
 ## Version Compatibility

@@ -106,8 +106,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **Binary Format Header** (1 day)
+
    ```rust
-   // crates/cartridge/src/header.rs
+   // crates/cartridge-rs/src/header.rs
 
    pub const MAGIC: [u8; 8] = *b"CART\x00\x01\x00\x00";
    pub const VERSION_MAJOR: u16 = 1;
@@ -154,8 +155,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **Page Types and Management** (1 day)
+
    ```rust
-   // crates/cartridge/src/page.rs
+   // crates/cartridge-rs/src/page.rs
 
    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
    #[repr(u8)]
@@ -209,8 +211,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 3. **Block Allocator Interface** (1 day)
+
    ```rust
-   // crates/cartridge/src/allocator.rs
+   // crates/cartridge-rs/src/allocator.rs
 
    pub trait BlockAllocator {
        fn allocate(&mut self, size: u64) -> Result<Vec<u64>, CartridgeError>;
@@ -260,8 +263,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 4. **Bitmap Allocator** (2 days)
+
    ```rust
-   // crates/cartridge/src/allocator/bitmap.rs
+   // crates/cartridge-rs/src/allocator/bitmap.rs
 
    pub struct BitmapAllocator {
        bitmap: Vec<u64>,       // Each bit = 1 block (4KB)
@@ -343,6 +347,7 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 1)
+
 - ✅ Header format with validation
 - ✅ Page types and checksum verification
 - ✅ Hybrid block allocator (dispatcher)
@@ -359,8 +364,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **B-Tree Node Structure** (2 days)
+
    ```rust
-   // crates/cartridge/src/catalog/btree.rs
+   // crates/cartridge-rs/src/catalog/btree.rs
 
    pub const BTREE_FANOUT: usize = 680;  // ~680 entries per 16KB node
 
@@ -444,8 +450,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **B-Tree Operations** (2 days)
+
    ```rust
-   // crates/cartridge/src/catalog/mod.rs
+   // crates/cartridge-rs/src/catalog/mod.rs
 
    pub struct Catalog {
        root_page_id: u64,
@@ -517,8 +524,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 3. **Path Hashing** (1 day)
+
    ```rust
-   // crates/cartridge/src/hash.rs
+   // crates/cartridge-rs/src/hash.rs
 
    use xxhash_rust::xxh3::xxh3_64;
 
@@ -534,6 +542,7 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 2)
+
 - ✅ B-tree node structure with insert/search
 - ✅ Catalog wrapper with recursive operations
 - ✅ Path hashing with normalization
@@ -550,8 +559,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **Extent Allocator** (2 days)
+
    ```rust
-   // crates/cartridge/src/allocator/extent.rs
+   // crates/cartridge-rs/src/allocator/extent.rs
 
    use std::collections::BTreeMap;
 
@@ -681,8 +691,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **Incremental Compaction** (3 days)
+
    ```rust
-   // crates/cartridge/src/compaction.rs
+   // crates/cartridge-rs/src/compaction.rs
 
    pub struct IncrementalCompactor {
        allocator: Arc<Mutex<HybridAllocator>>,
@@ -768,6 +779,7 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 3)
+
 - ✅ Extent allocator with automatic coalescing
 - ✅ Incremental compaction (100 blocks/cycle, <10ms latency)
 - ✅ Fragmentation scoring
@@ -784,8 +796,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **VFS Structure** (2 days)
+
    ```rust
-   // crates/cartridge/src/vfs/mod.rs
+   // crates/cartridge-rs/src/vfs/mod.rs
 
    use libsqlite3_sys as ffi;
 
@@ -842,8 +855,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **File I/O Methods** (3 days)
+
    ```rust
-   // crates/cartridge/src/vfs/file.rs
+   // crates/cartridge-rs/src/vfs/file.rs
 
    unsafe extern "C" fn file_close(file: *mut ffi::sqlite3_file) -> c_int {
        let cart_file = &mut *(file as *mut CartridgeFile);
@@ -956,9 +970,10 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 4)
+
 - ✅ VFS registration
 - ✅ 13 core file I/O methods
-- ✅ Exclusive locking mode (no xShm* methods)
+- ✅ Exclusive locking mode (no xShm\* methods)
 - ✅ Integration test: Create SQLite database in cartridge
 - ✅ Integration test: WAL mode with transactions
 - ✅ Performance test: 3-10x slower than native filesystem
@@ -972,8 +987,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **Policy Document Structure** (1 day)
+
    ```rust
-   // crates/cartridge/src/iam/policy.rs
+   // crates/cartridge-rs/src/iam/policy.rs
 
    #[derive(Debug, Clone, Serialize, Deserialize)]
    pub struct PolicyDocument {
@@ -1035,8 +1051,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **Policy Evaluation Engine** (3 days)
+
    ```rust
-   // crates/cartridge/src/iam/evaluator.rs
+   // crates/cartridge-rs/src/iam/evaluator.rs
 
    pub struct PolicyEvaluator {
        policies: Vec<PolicyDocument>,
@@ -1206,6 +1223,7 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 5)
+
 - ✅ Policy document parsing (JSON)
 - ✅ Policy evaluation engine with explicit deny precedence
 - ✅ Pattern matching with wildcard support
@@ -1223,8 +1241,9 @@ This document provides a detailed technical implementation plan for the **Cartri
 #### Tasks
 
 1. **Audit Log Structure** (2 days)
+
    ```rust
-   // crates/cartridge/src/audit/mod.rs
+   // crates/cartridge-rs/src/audit/mod.rs
 
    #[repr(C)]
    #[derive(Debug, Clone, Copy)]
@@ -1295,8 +1314,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 2. **Lock-Free Ring Buffer** (2 days)
+
    ```rust
-   // crates/cartridge/src/audit/ring_buffer.rs
+   // crates/cartridge-rs/src/audit/ring_buffer.rs
 
    use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1347,8 +1367,9 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 3. **Buffer Pool with ARC** (2 days)
+
    ```rust
-   // crates/cartridge/src/buffer_pool.rs
+   // crates/cartridge-rs/src/buffer_pool.rs
 
    pub struct BufferPool {
        t1: LruList,        // Recently accessed
@@ -1440,6 +1461,7 @@ This document provides a detailed technical implementation plan for the **Cartri
    ```
 
 #### Deliverables (Week 6)
+
 - ✅ Audit log with lock-free ring buffer
 - ✅ Async flush thread (10-100ms batching)
 - ✅ Buffer pool with ARC eviction policy
@@ -1614,12 +1636,14 @@ cargo bench --bench audit         # Audit throughput
 The Cartridge format **reuses and extends** the existing `engram-rs` library from `../engram-core/`:
 
 **What we reuse from engram-rs**:
+
 - **ED25519 signing**: `ed25519-dalek` for cryptographic signatures
 - **Compression**: `lz4_flex` and `zstd` for content compression
 - **Checksums**: `crc32fast` and `sha2` for integrity verification
 - **Serialization**: `serde` and `serde_json` for manifests
 
 **What Cartridge adds**:
+
 - **Mutable archive format** (engram is immutable)
 - **SQLite VFS** (engram uses read-only VFS)
 - **IAM policy engine** (engram has basic permissions)
@@ -1627,6 +1651,7 @@ The Cartridge format **reuses and extends** the existing `engram-rs` library fro
 - **Audit logging** (engram doesn't track mutations)
 
 **Integration strategy**:
+
 ```rust
 // Cartridge can export to Engram (snapshot workflow)
 let cartridge = Cartridge::open("workspace.cart")?;
@@ -1713,15 +1738,15 @@ harness = false
 
 ## Performance Targets
 
-| Metric | Target | Measured |
-|--------|--------|----------|
-| Read latency (cached) | <10μs | TBD |
-| Write latency (with audit) | <50μs | TBD |
-| Buffer pool hit ratio | >90% | TBD |
-| IOPS (NVMe) | >100K | TBD |
-| IAM evaluation (cached) | <100μs | TBD |
-| Audit overhead | <1% | TBD |
-| SQLite overhead | 3-10x vs native | TBD |
+| Metric                     | Target          | Measured |
+| -------------------------- | --------------- | -------- |
+| Read latency (cached)      | <10μs           | TBD      |
+| Write latency (with audit) | <50μs           | TBD      |
+| Buffer pool hit ratio      | >90%            | TBD      |
+| IOPS (NVMe)                | >100K           | TBD      |
+| IAM evaluation (cached)    | <100μs          | TBD      |
+| Audit overhead             | <1%             | TBD      |
+| SQLite overhead            | 3-10x vs native | TBD      |
 
 ---
 

@@ -26,3 +26,6 @@ test_output/
 
 # Environment variables (contains secrets)
 .env
+
+# AI
+.claude

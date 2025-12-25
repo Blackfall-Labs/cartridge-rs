@@ -2,8 +2,8 @@
 
 **Mutable containers that grow with your data** 📦
 
-[![Crates.io](https://img.shields.io/crates/v/cartridge-rs)](https://crates.io/crates/cartridge-rs)
-[![Documentation](https://docs.rs/cartridge-rs/badge.svg)](https://docs.rs/cartridge-rs)
+[![Crates.io](https://img.shields.io/crates/v/cartridge-rs-rs)](https://crates.io/crates/cartridge-rs-rs)
+[![Documentation](https://docs.rs/cartridge-rs-rs/badge.svg)](https://docs.rs/cartridge-rs-rs)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 [![Tests](https://img.shields.io/badge/tests-115%20passing-brightgreen)]()
 
@@ -70,12 +70,12 @@ fn main() -> anyhow::Result<()> {
 
 Verified benchmarks on real hardware:
 
-| Operation | Throughput | Notes |
-|-----------|------------|-------|
-| **Read** | 17.91 GiB/s | Faster than most SSDs |
-| **Write** | 9.41 GiB/s | Sustained performance |
-| **LZ4 Decompress** | 38.12 GiB/s | 4x faster than compression |
-| **Allocation** | 173k blocks/ms | Extent allocator |
+| Operation          | Throughput     | Notes                      |
+| ------------------ | -------------- | -------------------------- |
+| **Read**           | 17.91 GiB/s    | Faster than most SSDs      |
+| **Write**          | 9.41 GiB/s     | Sustained performance      |
+| **LZ4 Decompress** | 38.12 GiB/s    | 4x faster than compression |
+| **Allocation**     | 173k blocks/ms | Extent allocator           |
 
 ### 📦 Auto-Growth
 
@@ -153,17 +153,20 @@ cart.restore_snapshot(snapshot1)?;
 ### 🔐 Security Features
 
 **Compression:**
+
 ```rust
 cart.enable_compression()?;  // LZ4 (9.77 GiB/s) or Zstd (4.87 GiB/s)
 ```
 
 **Encryption:**
+
 ```rust
 let key = load_key_from_secure_source()?;
 cart.enable_encryption(&key)?;  // AES-256-GCM
 ```
 
 **Access Control (IAM):**
+
 ```rust
 use cartridge_rs::{Policy, Statement, Action, Effect};
 
@@ -187,6 +190,7 @@ cart.write("/test.txt", b"data")?;  // ❌ Error: Access denied
 ```
 
 **Immutable Archives:**
+
 ```rust
 // Freeze container to immutable, cryptographically signed archive
 cart.freeze_to_engram("archive-v1.0.eng")?;
@@ -463,16 +467,17 @@ cargo test -- --nocapture
 
 ### Test Coverage
 
-| Phase | Tests | What It Tests |
-|-------|-------|---------------|
-| **Phase 1** | 26 | Data integrity, corruption detection, crash recovery |
-| **Phase 2** | 26 | Concurrency (12 threads), VFS multi-conn, snapshot consistency |
-| **Phase 3** | 8 | Performance, auto-growth, 100GB scale, fragmentation |
-| **Phase 4** | 17 | Snapshots, audit logging, engram freezing |
-| **Phase 5** | 19 | IAM security (2 CVEs fixed!), memory safety |
-| **Phase 6** | 19 | VFS FFI (29 unsafe blocks), 100 concurrent SQLite connections |
+| Phase       | Tests | What It Tests                                                  |
+| ----------- | ----- | -------------------------------------------------------------- |
+| **Phase 1** | 26    | Data integrity, corruption detection, crash recovery           |
+| **Phase 2** | 26    | Concurrency (12 threads), VFS multi-conn, snapshot consistency |
+| **Phase 3** | 8     | Performance, auto-growth, 100GB scale, fragmentation           |
+| **Phase 4** | 17    | Snapshots, audit logging, engram freezing                      |
+| **Phase 5** | 19    | IAM security (2 CVEs fixed!), memory safety                    |
+| **Phase 6** | 19    | VFS FFI (29 unsafe blocks), 100 concurrent SQLite connections  |
 
 **Critical Security Fixes:**
+
 - ✅ **CVE-001**: IAM path traversal (`/public/../private/secret.txt` blocked)
 - ✅ **CVE-002**: IAM glob patterns (`*.txt` now works correctly)
 
@@ -496,29 +501,29 @@ cargo bench --bench compression_analysis
 
 Tested on **AMD Ryzen 9 7950X** with NVMe SSD:
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **Read Throughput** | 17.91 GiB/s | Mean, 64KB blocks |
-| **Write Throughput** | 9.41 GiB/s | Mean, 64KB blocks |
-| **LZ4 Compress** | 9.77 GiB/s | Real-time compression |
-| **LZ4 Decompress** | 38.12 GiB/s | 4x faster than compress |
-| **Zstd Compress** | 4.87 GiB/s | Better ratios (~4-5x) |
-| **Allocation (small)** | 24k blocks/ms | Bitmap allocator |
+| Metric                 | Value          | Notes                           |
+| ---------------------- | -------------- | ------------------------------- |
+| **Read Throughput**    | 17.91 GiB/s    | Mean, 64KB blocks               |
+| **Write Throughput**   | 9.41 GiB/s     | Mean, 64KB blocks               |
+| **LZ4 Compress**       | 9.77 GiB/s     | Real-time compression           |
+| **LZ4 Decompress**     | 38.12 GiB/s    | 4x faster than compress         |
+| **Zstd Compress**      | 4.87 GiB/s     | Better ratios (~4-5x)           |
+| **Allocation (small)** | 24k blocks/ms  | Bitmap allocator                |
 | **Allocation (large)** | 173k blocks/ms | Extent allocator (301x faster!) |
-| **Cache Hit** | 20-255 μs | ARC buffer pool |
-| **Policy Eval** | 5 μs | IAM (cached), 1M+ evals/sec |
+| **Cache Hit**          | 20-255 μs      | ARC buffer pool                 |
+| **Policy Eval**        | 5 μs           | IAM (cached), 1M+ evals/sec     |
 
-*Verified: See `docs/performance.md` and `TESTING_STATUS.md`*
+_Verified: See `docs/performance.md` and `TESTING_STATUS.md`_
 
 ### Scalability
 
-| Dimension | v0.2.4 (Current) | v0.3.0 (Planned) |
-|-----------|------------------|------------------|
-| **Max Files** | 10k-50k | Millions |
-| **Max Size** | 18.4 EB (filesystem limit) | Same |
-| **Min Size** | 12 KB (3 pages) | Same |
-| **Concurrency** | Multi-threaded (single process) | Multi-process |
-| **Catalog** | Single 4KB page (JSON) | Multi-page B-tree (binary) |
+| Dimension       | v0.2.4 (Current)                | v0.3.0 (Planned)           |
+| --------------- | ------------------------------- | -------------------------- |
+| **Max Files**   | 10k-50k                         | Millions                   |
+| **Max Size**    | 18.4 EB (filesystem limit)      | Same                       |
+| **Min Size**    | 12 KB (3 pages)                 | Same                       |
+| **Concurrency** | Multi-threaded (single process) | Multi-process              |
+| **Catalog**     | Single 4KB page (JSON)          | Multi-page B-tree (binary) |
 
 ---
 
@@ -527,16 +532,19 @@ Tested on **AMD Ryzen 9 7950X** with NVMe SSD:
 ### Specifications
 
 📘 **[CARTRIDGE_SPECIFICATION.md](CARTRIDGE_SPECIFICATION.md)** - Complete binary format spec (like SQLite's spec)
+
 - Byte-level format definition
 - All data structures documented
 - Reproducible from spec alone
 
 📗 **[TESTING_STATUS.md](TESTING_STATUS.md)** - Testing status & results
+
 - All 6 phases documented
 - Security fixes detailed
 - Production readiness checklist
 
 📙 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Implementation guide
+
 - Component interactions
 - Design decisions
 - Performance characteristics
@@ -545,7 +553,7 @@ Tested on **AMD Ryzen 9 7950X** with NVMe SSD:
 
 📕 **[LIBRARY_USAGE.md](LIBRARY_USAGE.md)** - Comprehensive usage guide
 📔 **[TODO.md](TODO.md)** - Roadmap & pending features
-📓 **[API Docs](https://docs.rs/cartridge-rs)** - Full API reference
+📓 **[API Docs](https://docs.rs/cartridge-rs-rs)** - Full API reference
 
 ---
 
@@ -553,14 +561,14 @@ Tested on **AMD Ryzen 9 7950X** with NVMe SSD:
 
 Cartridge is part of the **Blackfall Labs** offline-first technology stack:
 
-| Project | Description |
-|---------|-------------|
-| **[SAM](../sam)** | Offline AI assistant for crisis call centers |
-| **[Engram](../engram-rs)** | Immutable archives with Ed25519 signatures |
-| **[Cartridge-S3](../cartridge-s3-rs)** | S3-compatible HTTP API for Cartridge |
-| **[CML](../content-markup-language)** | Semantic content markup format |
-| **[BytePunch](../bytepunch-rs)** | Profile-aware compression (40-70% ratios) |
-| **[Research Engine](../research-engine)** | Tauri desktop research application |
+| Project                                   | Description                                  |
+| ----------------------------------------- | -------------------------------------------- |
+| **[SAM](../sam)**                         | Offline AI assistant for crisis call centers |
+| **[Engram](../engram-rs)**                | Immutable archives with Ed25519 signatures   |
+| **[Cartridge-S3](../cartridge-rs-s3-rs)** | S3-compatible HTTP API for Cartridge         |
+| **[CML](../content-markup-language)**     | Semantic content markup format               |
+| **[BytePunch](../bytepunch-rs)**          | Profile-aware compression (40-70% ratios)    |
+| **[Research Engine](../research-engine)** | Tauri desktop research application           |
 
 All projects share the **offline-first, cryptographically verified, privacy-first** philosophy.
 
@@ -601,28 +609,28 @@ All projects share the **offline-first, cryptographically verified, privacy-firs
 
 SQLite is a **relational database**. Cartridge is a **file container** with optional SQLite support.
 
-| Feature | SQLite | Cartridge |
-|---------|--------|-----------|
-| Purpose | Relational database | File container |
-| Data Model | Tables, SQL | Files, paths |
-| Auto-Growth | ✅ Yes | ✅ Yes |
-| Immutable Archives | ❌ No | ✅ Yes (Engram) |
-| IAM Policies | ❌ No | ✅ Yes |
-| Snapshots | ❌ No | ✅ Yes |
-| **Use Together?** | **✅ Yes! SQLite databases can run INSIDE Cartridge containers** |
+| Feature            | SQLite                                                           | Cartridge       |
+| ------------------ | ---------------------------------------------------------------- | --------------- |
+| Purpose            | Relational database                                              | File container  |
+| Data Model         | Tables, SQL                                                      | Files, paths    |
+| Auto-Growth        | ✅ Yes                                                           | ✅ Yes          |
+| Immutable Archives | ❌ No                                                            | ✅ Yes (Engram) |
+| IAM Policies       | ❌ No                                                            | ✅ Yes          |
+| Snapshots          | ❌ No                                                            | ✅ Yes          |
+| **Use Together?**  | **✅ Yes! SQLite databases can run INSIDE Cartridge containers** |
 
 ### How is this different from ZIP/TAR?
 
 ZIP/TAR are **archive formats**. Cartridge is a **mutable container**.
 
-| Feature | ZIP/TAR | Cartridge |
-|---------|---------|-----------|
-| Mutability | ❌ Immutable (recreate entire archive) | ✅ Mutable (update in-place) |
-| Auto-Growth | ❌ No | ✅ Yes |
-| Snapshots | ❌ No | ✅ Yes |
-| SQLite VFS | ❌ No | ✅ Yes |
-| Encryption | ⚠️ Limited (ZIP only) | ✅ AES-256-GCM |
-| Random Access | ⚠️ Slow | ✅ Fast (4KB pages) |
+| Feature       | ZIP/TAR                                | Cartridge                    |
+| ------------- | -------------------------------------- | ---------------------------- |
+| Mutability    | ❌ Immutable (recreate entire archive) | ✅ Mutable (update in-place) |
+| Auto-Growth   | ❌ No                                  | ✅ Yes                       |
+| Snapshots     | ❌ No                                  | ✅ Yes                       |
+| SQLite VFS    | ❌ No                                  | ✅ Yes                       |
+| Encryption    | ⚠️ Limited (ZIP only)                  | ✅ AES-256-GCM               |
+| Random Access | ⚠️ Slow                                | ✅ Fast (4KB pages)          |
 
 ### What about security?
 
@@ -644,6 +652,7 @@ Faster than most SSDs for cached reads. Comparable to native filesystem for unca
 **Yes!** v0.2.4 is production-ready with 115 passing tests.
 
 **Known Limitations:**
+
 - Single-page catalog (10k-50k files max)
 - Single-process only (no multi-process locking)
 - No WAL (v0.3 will add)
@@ -682,6 +691,7 @@ Licensed under your choice of:
 **Built with:** Rust 🦀
 
 **Special Thanks:**
+
 - [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite bindings
 - [lz4_flex](https://github.com/PSeitz/lz4_flex) - Fast LZ4
 - [zstd-rs](https://github.com/gyscos/zstd-rs) - Zstandard
@@ -694,7 +704,7 @@ Licensed under your choice of:
 
 **Questions? Issues? Ideas?**
 
-[Open an Issue](https://github.com/blackfall-labs/cartridge/issues) · [Read the Docs](https://docs.rs/cartridge-rs) · [View Examples](examples/)
+[Open an Issue](https://github.com/blackfall-labs/cartridge-rs/issues) · [Read the Docs](https://docs.rs/cartridge-rs-rs) · [View Examples](examples/)
 
 **⭐ Star us on GitHub if you find this useful!**
 

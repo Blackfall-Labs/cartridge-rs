@@ -29,6 +29,7 @@
 ### Purpose
 
 This document defines the binary format for Cartridge archives (`.cart` files). The format is designed for:
+
 - Embedded systems with limited resources (Raspberry Pi 5)
 - Mutable archive workspaces with freeze-to-immutable capability
 - High-performance file I/O with optional compression and encryption
@@ -79,12 +80,12 @@ This document defines the binary format for Cartridge archives (`.cart` files). 
 
 ### Reserved Pages
 
-| Page ID | Purpose | Fixed |
-|---------|---------|-------|
-| 0 | Header | ✅ Always |
-| 1 | Catalog B-tree root | ✅ Always |
-| 2 | Allocator state | ✅ Always |
-| 3+ | Content data / freelist / audit | Dynamic |
+| Page ID | Purpose                         | Fixed     |
+| ------- | ------------------------------- | --------- |
+| 0       | Header                          | ✅ Always |
+| 1       | Catalog B-tree root             | ✅ Always |
+| 2       | Allocator state                 | ✅ Always |
+| 3+      | Content data / freelist / audit | Dynamic   |
 
 ---
 
@@ -96,17 +97,17 @@ This document defines the binary format for Cartridge archives (`.cart` files). 
 
 #### Byte Layout
 
-| Offset | Size | Type | Field | Description |
-|--------|------|------|-------|-------------|
-| 0 | 8 | u8[8] | magic | Magic number: `"CART\x00\x01\x00\x00"` |
-| 8 | 2 | u16 | version_major | Major version (1 for v0.1) |
-| 10 | 2 | u16 | version_minor | Minor version (0 for v0.1) |
-| 12 | 4 | u32 | block_size | Block size in bytes (4096, constant) |
-| 16 | 8 | u64 | total_blocks | Total number of blocks in archive |
-| 24 | 8 | u64 | free_blocks | Number of free blocks available |
-| 32 | 8 | u64 | btree_root_page | Page ID of B-tree catalog root (always 1) |
-| 40 | 256 | u8[256] | reserved | Reserved for future use (all zeros) |
-| 296 | 3800 | - | padding | Padding to 4096 bytes (all zeros) |
+| Offset | Size | Type    | Field           | Description                               |
+| ------ | ---- | ------- | --------------- | ----------------------------------------- |
+| 0      | 8    | u8[8]   | magic           | Magic number: `"CART\x00\x01\x00\x00"`    |
+| 8      | 2    | u16     | version_major   | Major version (1 for v0.1)                |
+| 10     | 2    | u16     | version_minor   | Minor version (0 for v0.1)                |
+| 12     | 4    | u32     | block_size      | Block size in bytes (4096, constant)      |
+| 16     | 8    | u64     | total_blocks    | Total number of blocks in archive         |
+| 24     | 8    | u64     | free_blocks     | Number of free blocks available           |
+| 32     | 8    | u64     | btree_root_page | Page ID of B-tree catalog root (always 1) |
+| 40     | 256  | u8[256] | reserved        | Reserved for future use (all zeros)       |
+| 296    | 3800 | -       | padding         | Padding to 4096 bytes (all zeros)         |
 
 #### C Structure (for reference)
 
@@ -149,15 +150,15 @@ The 256-byte reserved space (offset 40-295) can be used for future extensions:
 
 **Proposed Allocations (not yet implemented):**
 
-| Offset | Size | Purpose |
-|--------|------|---------|
-| 40 | 1 | compression_method (0=None, 1=LZ4, 2=Zstd) |
-| 41 | 1 | encryption_enabled (0=No, 1=Yes) |
-| 42 | 32 | encryption_key_hash (SHA-256 of master key) |
-| 74 | 8 | snapshot_count (number of snapshots) |
-| 82 | 8 | audit_log_start (first audit log page) |
-| 90 | 8 | freelist_start (first freelist page) |
-| 98 | 158 | reserved_future (zeros) |
+| Offset | Size | Purpose                                     |
+| ------ | ---- | ------------------------------------------- |
+| 40     | 1    | compression_method (0=None, 1=LZ4, 2=Zstd)  |
+| 41     | 1    | encryption_enabled (0=No, 1=Yes)            |
+| 42     | 32   | encryption_key_hash (SHA-256 of master key) |
+| 74     | 8    | snapshot_count (number of snapshots)        |
+| 82     | 8    | audit_log_start (first audit log page)      |
+| 90     | 8    | freelist_start (first freelist page)        |
+| 98     | 158  | reserved_future (zeros)                     |
 
 #### Validation Rules
 
@@ -180,22 +181,22 @@ All pages (except page 0) share a common structure:
 
 #### Byte Layout
 
-| Offset | Size | Type | Field | Description |
-|--------|------|------|-------|-------------|
-| 0 | 1 | u8 | page_type | Page type identifier (0-4) |
-| 1 | 32 | u8[32] | checksum | SHA-256 checksum of data (optional) |
-| 33 | 31 | u8[31] | reserved | Reserved for future use |
-| 64 | 4032 | u8[4032] | data | Page data (varies by type) |
+| Offset | Size | Type     | Field     | Description                         |
+| ------ | ---- | -------- | --------- | ----------------------------------- |
+| 0      | 1    | u8       | page_type | Page type identifier (0-4)          |
+| 1      | 32   | u8[32]   | checksum  | SHA-256 checksum of data (optional) |
+| 33     | 31   | u8[31]   | reserved  | Reserved for future use             |
+| 64     | 4032 | u8[4032] | data      | Page data (varies by type)          |
 
 #### Page Types
 
-| Value | Name | Description |
-|-------|------|-------------|
-| 0 | Header | Archive header (page 0 only) |
-| 1 | CatalogBTree | B-tree catalog node |
-| 2 | ContentData | File content data |
-| 3 | Freelist | Free block tracking |
-| 4 | AuditLog | Audit log entries |
+| Value | Name         | Description                  |
+| ----- | ------------ | ---------------------------- |
+| 0     | Header       | Archive header (page 0 only) |
+| 1     | CatalogBTree | B-tree catalog node          |
+| 2     | ContentData  | File content data            |
+| 3     | Freelist     | Free block tracking          |
+| 4     | AuditLog     | Audit log entries            |
 
 #### Page Header (64 bytes)
 
@@ -214,10 +215,12 @@ struct PageHeader {
 - **Output:** 32-byte hash stored at offset 1-32
 
 **Optional Checksum:**
+
 - If checksum is all zeros (32 × 0x00): **Skip verification**
 - If checksum is non-zero: **Verify on read**
 
 **Verification:**
+
 ```rust
 fn verify_checksum(page: &Page) -> bool {
     if page.header.checksum == [0u8; 32] {
@@ -265,6 +268,7 @@ Page 1 contains a JSON-serialized B-tree:
 ```
 
 **Limitations:**
+
 - Maximum catalog size: 4032 bytes (single page)
 - Approximate capacity: 10-20 files (depends on path lengths)
 
@@ -282,10 +286,10 @@ struct FileMetadata {
 
 #### FileType Values
 
-| Value | Name | Description |
-|-------|------|-------------|
-| 0 | File | Regular file |
-| 1 | Directory | Directory (no blocks allocated) |
+| Value | Name      | Description                     |
+| ----- | --------- | ------------------------------- |
+| 0     | File      | Regular file                    |
+| 1     | Directory | Directory (no blocks allocated) |
 
 #### Future Multi-Page B-tree (v0.2)
 
@@ -337,12 +341,14 @@ B-tree Node Page (Page Type: CatalogBTree)
 #### Bitmap Format
 
 **Structure:**
+
 - Array of u64 values
 - Each bit represents one block (0 = free, 1 = allocated)
 - 64 blocks per u64 entry
 - Little-endian bit order
 
 **Example:**
+
 ```
 bitmap[0] = 0b0000_0000_0000_0111 (binary)
           = 7 (decimal)
@@ -354,6 +360,7 @@ Blocks 3-63 are free (bits clear)
 #### Extent Format
 
 **Structure:**
+
 ```rust
 struct Extent {
     start: u64,     // Starting block ID
@@ -362,6 +369,7 @@ struct Extent {
 ```
 
 **Free Extents List:**
+
 - Sorted by start block ID
 - Merged automatically on free (coalescing)
 
@@ -375,15 +383,16 @@ Compression is applied to page data (4032 bytes), not the entire page.
 
 #### Compression Methods
 
-| Value | Name | Description |
-|-------|------|-------------|
-| 0 | None | No compression |
-| 1 | LZ4 | LZ4 compression (fast, moderate ratio) |
-| 2 | Zstd | Zstandard compression (slower, better ratio) |
+| Value | Name | Description                                  |
+| ----- | ---- | -------------------------------------------- |
+| 0     | None | No compression                               |
+| 1     | LZ4  | LZ4 compression (fast, moderate ratio)       |
+| 2     | Zstd | Zstandard compression (slower, better ratio) |
 
 #### Compressed Data Format
 
 **For LZ4:**
+
 ```
 [size_prefix: 4 bytes][compressed_data]
 ```
@@ -392,6 +401,7 @@ Compression is applied to page data (4032 bytes), not the entire page.
 - Total size: 4 + compressed_length
 
 **For Zstd:**
+
 ```
 [compressed_data]
 ```
@@ -402,6 +412,7 @@ Compression is applied to page data (4032 bytes), not the entire page.
 #### Compression Decision
 
 Compression is applied if:
+
 1. Data size ≥ threshold (512 bytes for LZ4, 1024 for Zstd)
 2. Compression ratio < min_ratio (0.9 for LZ4, 0.85 for Zstd)
 
@@ -411,11 +422,11 @@ Otherwise, data is stored uncompressed.
 
 In v0.2, page header reserved space may include:
 
-| Offset | Size | Field | Values |
-|--------|------|-------|--------|
-| 33 | 1 | compression_method | 0=None, 1=LZ4, 2=Zstd |
-| 34 | 4 | original_size | Uncompressed size (bytes) |
-| 38 | 4 | compressed_size | Compressed size (bytes) |
+| Offset | Size | Field              | Values                    |
+| ------ | ---- | ------------------ | ------------------------- |
+| 33     | 1    | compression_method | 0=None, 1=LZ4, 2=Zstd     |
+| 34     | 4    | original_size      | Uncompressed size (bytes) |
+| 38     | 4    | compressed_size    | Compressed size (bytes)   |
 
 ---
 
@@ -428,6 +439,7 @@ Encryption is applied to page data (4032 bytes) after compression (if enabled).
 #### Encryption Algorithm
 
 **AES-256-GCM (Galois/Counter Mode)**
+
 - Key size: 256 bits (32 bytes)
 - Nonce size: 96 bits (12 bytes)
 - Tag size: 128 bits (16 bytes)
@@ -451,10 +463,12 @@ Encryption is applied to page data (4032 bytes) after compression (if enabled).
 #### Master Key
 
 **Storage:**
+
 - 32-byte master key (not stored in cartridge file)
 - Provided at runtime (environment variable, config file, hardware key)
 
 **Future:** Key derivation function (KDF) for page-specific keys:
+
 ```
 page_key = HKDF-SHA256(master_key, page_id, "cartridge-page-key")
 ```
@@ -466,6 +480,7 @@ page_key = HKDF-SHA256(master_key, page_id, "cartridge-page-key")
 - Prevents tampering and forgery
 
 **Decryption failure indicates:**
+
 - Wrong key
 - Corrupted ciphertext
 - Tampered data
@@ -502,29 +517,31 @@ IAM policies are stored as JSON (not in cartridge file, but in engram manifest).
 
 #### Effect Values
 
-| Value | Name | Description |
-|-------|------|-------------|
-| Allow | Allow | Grant access |
-| Deny | Deny | Deny access (precedence over Allow) |
+| Value | Name  | Description                         |
+| ----- | ----- | ----------------------------------- |
+| Allow | Allow | Grant access                        |
+| Deny  | Deny  | Deny access (precedence over Allow) |
 
 #### Action Values
 
-| Value | Description |
-|-------|-------------|
-| Read | Read file content |
-| Write | Modify file content |
-| Create | Create new files |
-| Delete | Delete files |
-| List | List directory contents |
-| All | All actions (wildcard) |
+| Value  | Description             |
+| ------ | ----------------------- |
+| Read   | Read file content       |
+| Write  | Modify file content     |
+| Create | Create new files        |
+| Delete | Delete files            |
+| List   | List directory contents |
+| All    | All actions (wildcard)  |
 
 #### Resource Patterns
 
 **Wildcards:**
+
 - `*` - Match single path segment (e.g., `/docs/*.md`)
 - `**` - Match multiple segments (e.g., `/data/**`)
 
 **Examples:**
+
 - `/config.json` - Exact match
 - `/docs/*.md` - All markdown files in /docs
 - `/data/**` - All files under /data (recursive)
@@ -541,6 +558,7 @@ IAM policies are stored as JSON (not in cartridge file, but in engram manifest).
 ```
 
 **Operators:**
+
 - `StringEquals`, `StringNotEquals`
 - `NumericEquals`, `NumericLessThan`, `NumericGreaterThan`
 - `DateBefore`, `DateAfter`
@@ -572,7 +590,7 @@ snapshots/
   "name": "v1",
   "description": "First version",
   "created_at": 1700000000000000,
-  "parent_path": "/path/to/cartridge.cart",
+  "parent_path": "/path/to/cartridge-rs.cart",
   "header": {
     "magic": [67, 65, 82, 84, 0, 1, 0, 0],
     "version_major": 1,
@@ -601,11 +619,13 @@ Binary format:
 ```
 
 **Page Entry:**
+
 ```
 [page_id: u64][page_size: u64][page_data: u8[page_size]]
 ```
 
 **Example:**
+
 ```
 Page count:  2 (8 bytes, little-endian)
 
@@ -630,6 +650,7 @@ Page Entry 2:
 **Status:** Production
 
 **Features:**
+
 - Fixed 4KB page format
 - Magic number and version in header
 - Reserved space for future extensions
@@ -642,6 +663,7 @@ Page Entry 2:
 - Snapshot support
 
 **Limitations:**
+
 - Single-page catalog (limited to ~10,000 files)
 - JSON serialization (inefficient)
 - No WAL (crash recovery)
@@ -652,6 +674,7 @@ Page Entry 2:
 **Target:** Q1 2026
 
 **Planned Changes:**
+
 - Multi-page B-tree catalog (scale to millions of files)
 - Binary serialization (replace JSON)
 - WAL for crash recovery
@@ -660,6 +683,7 @@ Page Entry 2:
 - MVCC for concurrent access
 
 **Breaking Changes:**
+
 - Catalog format (backward compatible reader)
 - Allocator format (binary instead of JSON)
 
@@ -670,11 +694,13 @@ Page Entry 2:
 ### Forward Compatibility
 
 Implementations must:
+
 1. **Ignore unknown reserved bytes** (treat as zeros)
 2. **Check version_major** for compatibility
 3. **Support older version_minor** within same major version
 
 **Example:**
+
 ```rust
 fn is_compatible(header: &Header) -> bool {
     header.version_major == 1 && header.version_minor <= 0
@@ -684,6 +710,7 @@ fn is_compatible(header: &Header) -> bool {
 ### Backward Compatibility
 
 v0.2 readers must:
+
 - Support v0.1 files (read-only if necessary)
 - Convert v0.1 catalog to v0.2 on write
 - Preserve unknown fields in reserved space
@@ -691,6 +718,7 @@ v0.2 readers must:
 ### Migration Path
 
 **v0.1 → v0.2:**
+
 1. Read v0.1 file
 2. Parse JSON catalog and allocator
 3. Convert to binary format
@@ -698,6 +726,7 @@ v0.2 readers must:
 5. Optionally: compact and defragment
 
 **Tool:**
+
 ```bash
 cartridge-migrate --input v0.1.cart --output v0.2.cart
 ```
@@ -709,6 +738,7 @@ cartridge-migrate --input v0.1.cart --output v0.2.cart
 ### Example 1: Minimal Cartridge
 
 **Header (Page 0):**
+
 ```
 00000000: 43 41 52 54 00 01 00 00  01 00 00 00 00 10 00 00  CART............
 00000010: E8 03 00 00 00 00 00 00  E5 03 00 00 00 00 00 00  ................
@@ -717,6 +747,7 @@ cartridge-migrate --input v0.1.cart --output v0.2.cart
 ```
 
 **Decoded:**
+
 - Magic: "CART\x00\x01\x00\x00"
 - Version: 1.0
 - Block size: 4096
@@ -727,6 +758,7 @@ cartridge-migrate --input v0.1.cart --output v0.2.cart
 ### Example 2: Content Page
 
 **Page 3 (Content Data):**
+
 ```
 00000000: 02 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
 00000010: 00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
@@ -737,6 +769,7 @@ cartridge-migrate --input v0.1.cart --output v0.2.cart
 ```
 
 **Decoded:**
+
 - Page type: 2 (ContentData)
 - Checksum: all zeros (disabled)
 - Data: "Hello, World!" + padding
@@ -750,6 +783,7 @@ cartridge-migrate --input v0.1.cart --output v0.2.cart
 For implementing a Cartridge reader/writer:
 
 **Header:**
+
 - [ ] Verify magic number
 - [ ] Check version compatibility
 - [ ] Validate block_size == 4096
@@ -757,21 +791,25 @@ For implementing a Cartridge reader/writer:
 - [ ] Read btree_root_page
 
 **Pages:**
+
 - [ ] Read/write 4KB pages
 - [ ] Parse page headers (type, checksum)
 - [ ] Compute/verify SHA-256 checksums
 
 **Catalog:**
+
 - [ ] Deserialize B-tree from page 1
 - [ ] Lookup files by path
 - [ ] Insert/update/delete entries
 
 **Allocator:**
+
 - [ ] Deserialize allocator from page 2
 - [ ] Allocate/free blocks
 - [ ] Track free blocks
 
 **Optional Features:**
+
 - [ ] Compression (LZ4/Zstd)
 - [ ] Encryption (AES-256-GCM)
 - [ ] IAM policy evaluation
