@@ -283,16 +283,24 @@ impl Cartridge {
 
         // Serialize and write catalog state (uses page 1 for now)
         let catalog_data = serde_json::to_vec(self.catalog.btree())?;
+        if catalog_data.len() >= PAGE_SIZE {
+            return Err(CartridgeError::Allocation(
+                format!("Catalog too large for single page: {} bytes", catalog_data.len())
+            ));
+        }
         let mut page_data = vec![0u8; PAGE_SIZE];
-        let len = catalog_data.len().min(PAGE_SIZE);
-        page_data[..len].copy_from_slice(&catalog_data[..len]);
+        page_data[..catalog_data.len()].copy_from_slice(&catalog_data);
         file.write_page_data(1, &page_data)?;
 
         // Serialize and write allocator state (uses page 2 for now)
         let allocator_data = serde_json::to_vec(&self.allocator)?;
+        if allocator_data.len() >= PAGE_SIZE {
+            return Err(CartridgeError::Allocation(
+                format!("Allocator state too large for single page: {} bytes", allocator_data.len())
+            ));
+        }
         let mut page_data = vec![0u8; PAGE_SIZE];
-        let len = allocator_data.len().min(PAGE_SIZE);
-        page_data[..len].copy_from_slice(&allocator_data[..len]);
+        page_data[..allocator_data.len()].copy_from_slice(&allocator_data);
         file.write_page_data(2, &page_data)?;
 
         // Write dirty pages
@@ -323,8 +331,11 @@ impl Cartridge {
             return Ok(Catalog::new(root_page));
         }
 
-        // Deserialize B-tree
-        let btree: btree::BTree = serde_json::from_slice(&page_data[..end])?;
+        // Deserialize B-tree with corruption detection
+        let btree: btree::BTree = serde_json::from_slice(&page_data[..end])
+            .map_err(|e| CartridgeError::Corruption(
+                format!("Corrupted catalog B-tree: {}", e)
+            ))?;
 
         Ok(Catalog::from_btree(root_page, btree))
     }
@@ -342,8 +353,11 @@ impl Cartridge {
             return Ok(HybridAllocator::new(total_blocks));
         }
 
-        // Deserialize allocator
-        let allocator: HybridAllocator = serde_json::from_slice(&page_data[..end])?;
+        // Deserialize allocator with corruption detection
+        let allocator: HybridAllocator = serde_json::from_slice(&page_data[..end])
+            .map_err(|e| CartridgeError::Corruption(
+                format!("Corrupted allocator state: {}", e)
+            ))?;
 
         Ok(allocator)
     }
@@ -925,6 +939,17 @@ impl Cartridge {
         }
 
         Ok(content)
+    }
+}
+
+impl Drop for Cartridge {
+    fn drop(&mut self) {
+        // Automatically flush on drop to prevent data loss
+        if self.file.is_some() {
+            if let Err(e) = self.flush() {
+                tracing::warn!("Failed to flush cartridge on drop: {}", e);
+            }
+        }
     }
 }
 

@@ -55,6 +55,9 @@ pub enum CartridgeError {
 
     #[error("Manifest validation failed: {0}")]
     ManifestValidation(String),
+
+    #[error("Data corruption detected: {0}")]
+    Corruption(String),
 }
 
 pub type Result<T> = std::result::Result<T, CartridgeError>;
