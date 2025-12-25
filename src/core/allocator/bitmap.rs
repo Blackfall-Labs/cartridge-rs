@@ -122,6 +122,42 @@ impl BitmapAllocator {
         (self.bitmap[word_idx] & (1u64 << bit_idx)) != 0
     }
 
+    /// Mark specific blocks as allocated (without changing free_blocks counter)
+    ///
+    /// Used by HybridAllocator to keep allocators in sync
+    pub fn mark_allocated(&mut self, blocks: &[u64]) -> Result<()> {
+        for &block_id in blocks {
+            if block_id >= self.total_blocks as u64 {
+                return Err(CartridgeError::InvalidBlockId(block_id));
+            }
+
+            let word_idx = (block_id / 64) as usize;
+            let bit_idx = (block_id % 64) as usize;
+
+            // Set bit to 1 (allocated)
+            self.bitmap[word_idx] |= 1u64 << bit_idx;
+        }
+        Ok(())
+    }
+
+    /// Mark specific blocks as free (without changing free_blocks counter)
+    ///
+    /// Used by HybridAllocator to keep allocators in sync
+    pub fn mark_free(&mut self, blocks: &[u64]) -> Result<()> {
+        for &block_id in blocks {
+            if block_id >= self.total_blocks as u64 {
+                return Err(CartridgeError::InvalidBlockId(block_id));
+            }
+
+            let word_idx = (block_id / 64) as usize;
+            let bit_idx = (block_id % 64) as usize;
+
+            // Clear bit to 0 (free)
+            self.bitmap[word_idx] &= !(1u64 << bit_idx);
+        }
+        Ok(())
+    }
+
     /// Extend bitmap capacity to track more blocks
     ///
     /// Used by auto-growth to expand the allocator's capacity.

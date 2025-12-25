@@ -32,6 +32,9 @@ pub struct HybridAllocator {
 
     /// Total number of blocks managed
     total_blocks: usize,
+
+    /// Number of free blocks (canonical counter shared across both allocators)
+    free_blocks: usize,
 }
 
 impl HybridAllocator {
@@ -41,6 +44,7 @@ impl HybridAllocator {
             bitmap: BitmapAllocator::new(total_blocks),
             extent: ExtentAllocator::new(total_blocks),
             total_blocks,
+            free_blocks: total_blocks,
         }
     }
 
@@ -85,10 +89,20 @@ impl HybridAllocator {
     ///
     /// Used by auto-growth to expand the allocator's tracking capacity.
     pub fn extend_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks <= self.total_blocks {
+            return Ok(()); // No extension needed
+        }
+
+        let added_blocks = new_total_blocks - self.total_blocks;
+
         // Extend both allocators
         self.bitmap.extend_capacity(new_total_blocks)?;
         self.extent.extend_capacity(new_total_blocks)?;
+
+        // Update counters
         self.total_blocks = new_total_blocks;
+        self.free_blocks += added_blocks;
+
         Ok(())
     }
 }
@@ -106,26 +120,52 @@ pub struct AllocationStats {
 
 impl BlockAllocator for HybridAllocator {
     fn allocate(&mut self, size: u64) -> Result<Vec<u64>> {
-        if Self::should_use_bitmap(size) {
+        let num_blocks = ((size + PAGE_SIZE as u64 - 1) / PAGE_SIZE as u64) as usize;
+
+        // Check canonical free_blocks counter
+        if num_blocks > self.free_blocks {
+            return Err(crate::error::CartridgeError::OutOfSpace);
+        }
+
+        let result = if Self::should_use_bitmap(size) {
             // Small file: use bitmap allocator
-            self.bitmap.allocate(size)
+            let blocks = self.bitmap.allocate(size)?;
+            // Mark blocks as allocated in extent allocator too (to prevent collision)
+            self.extent.mark_allocated(&blocks)?;
+            blocks
         } else {
             // Large file: use extent allocator
-            self.extent.allocate(size)
-        }
+            let blocks = self.extent.allocate(size)?;
+            // Mark blocks as allocated in bitmap allocator too (to prevent collision)
+            self.bitmap.mark_allocated(&blocks)?;
+            blocks
+        };
+
+        // Update canonical free_blocks counter
+        self.free_blocks -= result.len();
+
+        Ok(result)
     }
 
     fn free(&mut self, blocks: &[u64]) -> Result<()> {
         // Determine which allocator to use based on number of blocks
         let num_blocks = blocks.len();
 
+        // Free from BOTH allocators to keep them in sync
         if num_blocks < SMALL_FILE_BLOCKS {
-            // Small allocation: free via bitmap
-            self.bitmap.free(blocks)
+            // Small allocation: free via bitmap (primary)
+            self.bitmap.free(blocks)?;
+            self.extent.mark_free(blocks)?;
         } else {
-            // Large allocation: free via extent
-            self.extent.free(blocks)
+            // Large allocation: free via extent (primary)
+            self.extent.free(blocks)?;
+            self.bitmap.mark_free(blocks)?;
         }
+
+        // Update canonical free_blocks counter
+        self.free_blocks += num_blocks;
+
+        Ok(())
     }
 
     fn fragmentation_score(&self) -> f64 {
@@ -137,9 +177,8 @@ impl BlockAllocator for HybridAllocator {
     }
 
     fn free_blocks(&self) -> usize {
-        // Both allocators track the same pool, so they should report the same free count
-        // We use bitmap's count as the authoritative source
-        self.bitmap.free_blocks()
+        // Return canonical free_blocks counter
+        self.free_blocks
     }
 }
 

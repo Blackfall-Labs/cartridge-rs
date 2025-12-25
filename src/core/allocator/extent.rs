@@ -230,6 +230,104 @@ impl ExtentAllocator {
         self.free_extents.len()
     }
 
+    /// Mark specific blocks as allocated (without changing free_blocks counter)
+    ///
+    /// Used by HybridAllocator to keep allocators in sync
+    pub fn mark_allocated(&mut self, blocks: &[u64]) -> Result<()> {
+        // Remove blocks from free extents
+        for &block_id in blocks {
+            // Find and remove from free extents
+            let mut keys_to_remove = Vec::new();
+            let mut new_extents = Vec::new();
+
+            for (&start, extent) in &self.free_extents {
+                if extent.contains(block_id) {
+                    keys_to_remove.push(start);
+
+                    // Split extent if needed
+                    if block_id > start {
+                        // Add extent before allocated block
+                        new_extents.push(Extent::new(start, block_id - start));
+                    }
+                    if block_id + 1 < start + extent.length {
+                        // Add extent after allocated block
+                        new_extents.push(Extent::new(
+                            block_id + 1,
+                            (start + extent.length) - (block_id + 1),
+                        ));
+                    }
+                }
+            }
+
+            // Apply changes
+            for key in keys_to_remove {
+                self.free_extents.remove(&key);
+            }
+            for extent in new_extents {
+                self.free_extents.insert(extent.start, extent);
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark specific blocks as free (without changing free_blocks counter)
+    ///
+    /// Used by HybridAllocator to keep allocators in sync
+    pub fn mark_free(&mut self, blocks: &[u64]) -> Result<()> {
+        // Add blocks back to free extents with coalescing
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        // Sort blocks
+        let mut sorted = blocks.to_vec();
+        sorted.sort_unstable();
+
+        // Group into extents
+        let mut current_start = sorted[0];
+        let mut current_len = 1u64;
+
+        for i in 1..sorted.len() {
+            if sorted[i] == sorted[i - 1] + 1 {
+                current_len += 1;
+            } else {
+                // Add current extent
+                let extent = Extent::new(current_start, current_len);
+                self.add_free_extent_with_coalesce(extent);
+                current_start = sorted[i];
+                current_len = 1;
+            }
+        }
+
+        // Add final extent
+        let extent = Extent::new(current_start, current_len);
+        self.add_free_extent_with_coalesce(extent);
+
+        Ok(())
+    }
+
+    /// Add a free extent with coalescing
+    fn add_free_extent_with_coalesce(&mut self, extent: Extent) {
+        // Try to coalesce with adjacent extents
+        let mut coalesced = extent;
+        let mut keys_to_remove = Vec::new();
+
+        for (&start, existing) in &self.free_extents {
+            if let Some(merged) = coalesced.coalesce(existing) {
+                coalesced = merged;
+                keys_to_remove.push(start);
+            }
+        }
+
+        // Remove old extents
+        for key in keys_to_remove {
+            self.free_extents.remove(&key);
+        }
+
+        // Insert coalesced extent
+        self.free_extents.insert(coalesced.start, coalesced);
+    }
+
     /// Extend extent allocator capacity to track more blocks
     ///
     /// Used by auto-growth to expand the allocator's capacity.

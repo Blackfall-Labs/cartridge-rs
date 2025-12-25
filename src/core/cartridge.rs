@@ -852,13 +852,14 @@ impl Cartridge {
             f.extend(new_total)?;
         }
 
-        // Update header
-        let added_blocks = new_total - current;
+        // Update header total_blocks
         self.header.total_blocks = new_total as u64;
-        self.header.free_blocks += added_blocks as u64;
 
-        // Extend allocator capacity
+        // Extend allocator capacity (this updates allocator's free_blocks)
         self.allocator.extend_capacity(new_total)?;
+
+        // Sync header free_blocks from allocator
+        self.header.free_blocks = self.allocator.free_blocks() as u64;
 
         Ok(())
     }
