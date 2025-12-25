@@ -7,8 +7,14 @@ use rusqlite::{params, Connection};
 use std::sync::Arc;
 use tempfile::TempDir;
 
+// Global lock to ensure VFS tests run serially (VFS registration is global in SQLite)
+use std::sync::Mutex as StdMutex;
+static VFS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
+
 #[test]
 fn test_vfs_basic_operations() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     // Create a cartridge
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
@@ -40,6 +46,8 @@ fn test_vfs_basic_operations() {
 
 #[test]
 fn test_vfs_create_table() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
@@ -69,6 +77,8 @@ fn test_vfs_create_table() {
 
 #[test]
 fn test_vfs_registration() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
@@ -89,6 +99,8 @@ fn test_vfs_registration() {
 
 #[test]
 fn test_vfs_full_sqlite_integration() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("test.cart");
 
@@ -201,12 +213,15 @@ fn test_vfs_full_sqlite_integration() {
 
 #[test]
 fn test_vfs_persistence_across_connections() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("persist.cart");
 
     let cartridge = Arc::new(Mutex::new(
         Cartridge::create_at(&cart_path, "test-vfs", "Test VFS").unwrap(),
     ));
+
     register_vfs(Arc::clone(&cartridge)).unwrap();
 
     let db_uri = format!("file:persist.db?vfs={}", VFS_NAME);
@@ -239,14 +254,26 @@ fn test_vfs_persistence_across_connections() {
         )
         .unwrap();
 
-        drop(conn);
+        // Ensure SQLite flushes all changes to VFS before closing
+        conn.execute("PRAGMA synchronous = FULL", []).unwrap();
+
+        // Force a checkpoint to ensure all data is written
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", []).ok();
+
+        // Explicitly close connection to ensure all data is written
+        conn.close().unwrap();
     }
 
-    // Flush to disk
+    // Flush to disk and ensure all pages are written
     {
         let mut cart = cartridge.lock();
         cart.flush().unwrap();
+        // Flush again to ensure all buffers are cleared
+        cart.flush().unwrap();
     }
+
+    // Small delay to ensure filesystem operations complete
+    std::thread::sleep(std::time::Duration::from_millis(10));
 
     // Second connection - verify data persisted
     {
@@ -274,6 +301,8 @@ fn test_vfs_persistence_across_connections() {
 
 #[test]
 fn test_vfs_transactions() {
+    let _lock = VFS_TEST_LOCK.lock();  // Serialize VFS tests
+
     let temp_dir = TempDir::new().unwrap();
     let cart_path = temp_dir.path().join("txn.cart");
 

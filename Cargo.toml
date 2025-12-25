@@ -13,7 +13,7 @@ homepage = "https://github.com/blackfall-labs/cartridge"
 
 [dependencies]
 # Engram integration (reuse existing crypto/compression)
-engram-rs = "1.0.0"
+engram-rs = "1.1.1"
 
 # Core
 serde = { version = "1.0", features = ["derive"] }

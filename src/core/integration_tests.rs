@@ -85,6 +85,7 @@ mod tests {
 
         // Verify we can read it back
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
         let repeating = reader.read_file("repeating.txt").unwrap();
         assert_eq!(repeating.len(), 2000); // 500 * 4
     }
@@ -132,6 +133,7 @@ mod tests {
 
         // Verify engram and manifest
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
         let manifest = reader.read_manifest().unwrap().expect("Manifest exists");
 
         // Check IAM capabilities in manifest
@@ -243,6 +245,7 @@ mod tests {
         freezer.freeze(&mut cart, &engram_path).unwrap();
 
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
         assert_eq!(reader.read_file("root.txt").unwrap(), b"root");
         assert_eq!(reader.read_file("dir1/file1.txt").unwrap(), b"file1");
         assert_eq!(reader.read_file("dir1/dir2/file2.txt").unwrap(), b"file2");
@@ -316,6 +319,7 @@ mod tests {
         freezer.freeze(&mut cart, &engram_path).unwrap();
 
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
         let manifest = reader.read_manifest().unwrap().expect("Manifest exists");
 
         // Verify manifest fields

@@ -5,6 +5,7 @@
 use crate::allocator::{hybrid::HybridAllocator, BlockAllocator};
 use crate::audit::{AuditLogger, Operation};
 use crate::catalog::{btree, Catalog, FileMetadata, FileType};
+use crate::encryption::EncryptionConfig;
 use crate::error::{CartridgeError, Result};
 use crate::header::{Header, PAGE_SIZE};
 use crate::iam::{Action, Policy, PolicyEngine};
@@ -58,6 +59,9 @@ pub struct Cartridge {
     /// IAM policy engine for evaluation - uses interior mutability for cache updates
     policy_engine: Option<Arc<Mutex<PolicyEngine>>>,
 
+    /// Encryption configuration (optional)
+    encryption_config: Option<EncryptionConfig>,
+
     /// Enable automatic growth (default: true)
     auto_grow: bool,
 
@@ -91,6 +95,7 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
+            encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
         }
@@ -145,6 +150,7 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
+            encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
         };
@@ -213,6 +219,7 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
+            encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
         };
@@ -256,6 +263,7 @@ impl Cartridge {
             session_id: 0,
             policy: None,
             policy_engine: None,
+            encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
         };
@@ -410,6 +418,49 @@ impl Cartridge {
             // No policy set - allow all operations (permissive by default)
             Ok(())
         }
+    }
+
+    /// Enable encryption with the provided key
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - 32-byte AES-256 encryption key
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use cartridge_core::Cartridge;
+    /// use cartridge_core::encryption::EncryptionConfig;
+    ///
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// let key = EncryptionConfig::generate_key();
+    /// cart.enable_encryption(&key)?;
+    /// ```
+    pub fn enable_encryption(&mut self, key: &[u8; 32]) -> Result<()> {
+        self.encryption_config = Some(EncryptionConfig::new(*key));
+        Ok(())
+    }
+
+    /// Disable encryption
+    ///
+    /// Note: This does not decrypt existing encrypted files.
+    /// New files written after disabling encryption will not be encrypted.
+    pub fn disable_encryption(&mut self) -> Result<()> {
+        self.encryption_config = None;
+        Ok(())
+    }
+
+    /// Check if encryption is enabled
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption_config
+            .as_ref()
+            .map(|c| c.is_enabled())
+            .unwrap_or(false)
+    }
+
+    /// Get the encryption configuration (if set)
+    pub(crate) fn encryption_config(&self) -> Option<&EncryptionConfig> {
+        self.encryption_config.as_ref()
     }
 
     /// Clear the IAM policy evaluation cache
@@ -574,23 +625,36 @@ impl Cartridge {
             )));
         }
 
-        // Ensure capacity before allocating
-        if !content.is_empty() {
-            self.ensure_capacity(content.len())?;
+        // Encrypt content if encryption is enabled
+        let (final_content, was_encrypted) = if let Some(config) = &self.encryption_config {
+            use crate::encryption::encrypt_if_enabled;
+            encrypt_if_enabled(content, config)?
+        } else {
+            (content.to_vec(), false)
+        };
+
+        // Ensure capacity before allocating (using final content size after encryption)
+        if !final_content.is_empty() {
+            self.ensure_capacity(final_content.len())?;
         }
 
         // Allocate blocks for content
-        let blocks = if content.is_empty() {
+        let blocks = if final_content.is_empty() {
             Vec::new()
         } else {
-            self.allocator.allocate(content.len() as u64)?
+            self.allocator.allocate(final_content.len() as u64)?
         };
 
-        // Write content to pages
-        self.write_content(&blocks, content)?;
+        // Write content to pages (encrypted if enabled)
+        self.write_content(&blocks, &final_content)?;
 
-        // Create metadata
-        let metadata = FileMetadata::new(FileType::File, content.len() as u64, blocks);
+        // Create metadata (store original size and encryption flag)
+        let mut metadata = FileMetadata::new(FileType::File, content.len() as u64, blocks);
+        if was_encrypted {
+            // Store encryption flag and encrypted size in user metadata
+            metadata.user_metadata.insert("encrypted".to_string(), "true".to_string());
+            metadata.user_metadata.insert("encrypted_size".to_string(), final_content.len().to_string());
+        }
 
         // Add to catalog
         self.catalog.insert(path, metadata)?;
@@ -620,8 +684,38 @@ impl Cartridge {
             return Err(CartridgeError::Allocation(format!("Not a file: {}", path)));
         }
 
-        // Read content from blocks
-        self.read_content(&metadata.blocks, metadata.size as usize)
+        // Check if file was encrypted
+        let was_encrypted = metadata.user_metadata.get("encrypted").map(|v| v == "true").unwrap_or(false);
+
+        // If encrypted, we need to read the encrypted size, not the original size
+        // If not encrypted, use the metadata size
+        let read_size = if was_encrypted {
+            // For encrypted files, read the encrypted size stored in metadata
+            metadata.user_metadata
+                .get("encrypted_size")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(metadata.size as usize) // Fallback to original size if not set
+        } else {
+            // For unencrypted files, use the original size
+            metadata.size as usize
+        };
+
+        // Read content from blocks (this reads the raw data, encrypted or not)
+        let raw_content = self.read_content(&metadata.blocks, read_size)?;
+
+        // Decrypt if needed
+        if was_encrypted {
+            if let Some(config) = &self.encryption_config {
+                use crate::encryption::decrypt_if_encrypted;
+                decrypt_if_encrypted(&raw_content, config, true)
+            } else {
+                Err(CartridgeError::Allocation(
+                    "File is encrypted but no encryption key is set".to_string()
+                ))
+            }
+        } else {
+            Ok(raw_content)
+        }
     }
 
     /// Write content to existing file (replace)
@@ -638,9 +732,17 @@ impl Cartridge {
             return Err(CartridgeError::Allocation(format!("Not a file: {}", path)));
         }
 
-        // Ensure capacity before allocating
-        if !content.is_empty() {
-            self.ensure_capacity(content.len())?;
+        // Encrypt content if encryption is enabled
+        let (final_content, was_encrypted) = if let Some(config) = &self.encryption_config {
+            use crate::encryption::encrypt_if_enabled;
+            encrypt_if_enabled(content, config)?
+        } else {
+            (content.to_vec(), false)
+        };
+
+        // Ensure capacity before allocating (using final content size after encryption)
+        if !final_content.is_empty() {
+            self.ensure_capacity(final_content.len())?;
         }
 
         // Free old blocks
@@ -649,19 +751,26 @@ impl Cartridge {
         }
 
         // Allocate new blocks
-        let new_blocks = if content.is_empty() {
+        let new_blocks = if final_content.is_empty() {
             Vec::new()
         } else {
-            self.allocator.allocate(content.len() as u64)?
+            self.allocator.allocate(final_content.len() as u64)?
         };
 
-        // Write new content
-        self.write_content(&new_blocks, content)?;
+        // Write new content (encrypted if enabled)
+        self.write_content(&new_blocks, &final_content)?;
 
-        // Update metadata
+        // Update metadata (store original size and encryption flag)
         metadata.size = content.len() as u64;
         metadata.blocks = new_blocks;
         metadata.touch();
+        if was_encrypted {
+            metadata.user_metadata.insert("encrypted".to_string(), "true".to_string());
+            metadata.user_metadata.insert("encrypted_size".to_string(), final_content.len().to_string());
+        } else {
+            metadata.user_metadata.remove("encrypted");
+            metadata.user_metadata.remove("encrypted_size");
+        }
 
         // Update catalog
         self.catalog.insert(path, metadata)?;

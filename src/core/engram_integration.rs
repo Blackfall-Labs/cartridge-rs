@@ -226,6 +226,7 @@ mod tests {
         // Verify we can read it back
         use engram_rs::ArchiveReader;
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
 
         let readme = reader.read_file("readme.txt").unwrap();
         assert_eq!(readme, b"Hello, World!");
@@ -341,6 +342,7 @@ mod tests {
         // Read manifest and verify IAM capabilities
         use engram_rs::ArchiveReader;
         let mut reader = ArchiveReader::open(&engram_path).unwrap();
+        reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
 
         // Read manifest
         let manifest = reader

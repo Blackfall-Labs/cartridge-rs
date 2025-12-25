@@ -40,6 +40,7 @@ fn test_freeze_basic() {
     // Verify we can read it back
     use engram_rs::ArchiveReader;
     let mut reader = ArchiveReader::open(&engram_path).unwrap();
+    reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
 
     for i in 0..50 {
         let data = reader.read_file(&format!("file{}.txt", i)).unwrap();
@@ -121,6 +122,7 @@ fn test_freeze_with_snapshots() {
     // Verify engram has v2
     use engram_rs::ArchiveReader;
     let mut reader = ArchiveReader::open(&engram_path).unwrap();
+    reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
     let data = reader.read_file("file.txt").unwrap();
     assert_eq!(data, b"v2");
 
@@ -205,7 +207,8 @@ fn test_freeze_empty_container() {
 
     // Verify it's a valid engram
     use engram_rs::ArchiveReader;
-    let reader = ArchiveReader::open(&engram_path).unwrap();
+    let mut reader = ArchiveReader::open(&engram_path).unwrap();
+    reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
     // Should have manifest but no files
     assert!(reader.read_manifest().unwrap().is_some());
 
@@ -240,6 +243,7 @@ fn test_freeze_mixed_file_sizes() {
     // Verify all files
     use engram_rs::ArchiveReader;
     let mut reader = ArchiveReader::open(&engram_path).unwrap();
+    reader.initialize().unwrap(); // REQUIRED in engram-rs 1.1.1+
 
     assert_eq!(reader.read_file("tiny.txt").unwrap(), b"small");
     assert_eq!(reader.read_file("medium.bin").unwrap().len(), 512 * 1024);

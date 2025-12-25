@@ -63,6 +63,7 @@ pub(crate) use core::{
 // Re-export core types that users need
 pub use crate::core::{
     catalog::{FileMetadata, FileType},
+    encryption::EncryptionConfig,
     error::{CartridgeError, Result},
     header::{Header, S3AclMode, S3FeatureFuses, S3SseMode, S3VersioningMode, PAGE_SIZE},
     iam::{Action, Effect, Policy, PolicyEngine, Statement},
@@ -719,6 +720,77 @@ impl Cartridge {
     /// ```
     pub fn restore_snapshot(&mut self, snapshot_id: u64, snapshot_dir: &std::path::Path) -> Result<()> {
         self.inner.restore_snapshot(snapshot_id, snapshot_dir)
+    }
+
+    /// Enable encryption for all new files written to the cartridge
+    ///
+    /// Once enabled, all new files created or updated will be encrypted using AES-256-GCM.
+    /// Existing files are not automatically encrypted - they remain as-is.
+    ///
+    /// # Arguments
+    /// * `key` - 32-byte AES-256 encryption key
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::{Cartridge, EncryptionConfig};
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("secure-data", "Secure Data")?;
+    ///
+    /// // Generate a random encryption key
+    /// let key = EncryptionConfig::generate_key();
+    ///
+    /// // Enable encryption
+    /// cart.enable_encryption(&key)?;
+    ///
+    /// // All new files will be encrypted
+    /// cart.write("sensitive.txt", b"confidential data")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_encryption(&mut self, key: &[u8; 32]) -> Result<()> {
+        self.inner.enable_encryption(key)
+    }
+
+    /// Disable encryption
+    ///
+    /// New files written after disabling encryption will not be encrypted.
+    /// Files that were already encrypted remain encrypted and require the key to read.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::Cartridge;
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// cart.disable_encryption()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disable_encryption(&mut self) -> Result<()> {
+        self.inner.disable_encryption()
+    }
+
+    /// Check if encryption is currently enabled
+    ///
+    /// Returns `true` if new files will be encrypted, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use cartridge_rs::{Cartridge, EncryptionConfig};
+    /// # fn main() -> cartridge_rs::Result<()> {
+    /// let mut cart = Cartridge::create("data", "My Data")?;
+    /// assert!(!cart.is_encrypted());
+    ///
+    /// let key = EncryptionConfig::generate_key();
+    /// cart.enable_encryption(&key)?;
+    /// assert!(cart.is_encrypted());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_encrypted(&self) -> bool {
+        self.inner.is_encrypted()
     }
 
     /// Get access to the underlying core Cartridge for advanced operations
