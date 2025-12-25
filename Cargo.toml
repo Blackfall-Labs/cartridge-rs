@@ -29,7 +29,7 @@ exclude = [
 ]
 
 [dependencies]
-cartridge = { version = "0.2.3", package = "cartridge-rs" }
+cartridge = { version = "0.2.4", package = "cartridge-rs" }
 
 # S3 implementation (updated to latest version)
 s3s = "0.12.0-rc.3"

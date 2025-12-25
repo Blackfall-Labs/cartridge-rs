@@ -167,7 +167,7 @@ impl s3s::S3 for CartridgeS3Backend {
         let output = HeadObjectOutput {
             content_length: Some(size as i64),
             e_tag: Some(ETag::Strong(etag)),
-            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM.to_string()),
             last_modified: Some(s3s::dto::Timestamp::from(std::time::SystemTime::now())),
             ..Default::default()
         };
