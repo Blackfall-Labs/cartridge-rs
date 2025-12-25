@@ -288,9 +288,12 @@ impl Cartridge {
                 format!("Catalog too large for single page: {} bytes", catalog_data.len())
             ));
         }
-        let mut page_data = vec![0u8; PAGE_SIZE];
-        page_data[..catalog_data.len()].copy_from_slice(&catalog_data);
-        file.write_page_data(1, &page_data)?;
+        let mut catalog_page_data = vec![0u8; PAGE_SIZE];
+        catalog_page_data[..catalog_data.len()].copy_from_slice(&catalog_data);
+        file.write_page_data(1, &catalog_page_data)?;
+
+        // Also add catalog page to in-memory pages for snapshots
+        self.pages.lock().insert(1, catalog_page_data);
 
         // Serialize and write allocator state (uses page 2 for now)
         let allocator_data = serde_json::to_vec(&self.allocator)?;
@@ -299,9 +302,12 @@ impl Cartridge {
                 format!("Allocator state too large for single page: {} bytes", allocator_data.len())
             ));
         }
-        let mut page_data = vec![0u8; PAGE_SIZE];
-        page_data[..allocator_data.len()].copy_from_slice(&allocator_data);
-        file.write_page_data(2, &page_data)?;
+        let mut allocator_page_data = vec![0u8; PAGE_SIZE];
+        allocator_page_data[..allocator_data.len()].copy_from_slice(&allocator_data);
+        file.write_page_data(2, &allocator_page_data)?;
+
+        // Also add allocator page to in-memory pages for snapshots
+        self.pages.lock().insert(2, allocator_page_data);
 
         // Write dirty pages
         let pages = self.pages.lock();

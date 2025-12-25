@@ -79,9 +79,6 @@ fn test_snapshot_with_deletes() {
     }
     cart.flush().unwrap();
 
-    let files_at_snapshot_time = cart.list("/").unwrap();
-    println!("Files at snapshot creation time: {} entries", files_at_snapshot_time.len());
-
     let snap_id = cart
         .create_snapshot("s1".to_string(), "Test".to_string(), &snapshot_dir)
         .unwrap();
@@ -96,21 +93,13 @@ fn test_snapshot_with_deletes() {
     let files_before = cart.list("/").unwrap();
     assert!(files_before.len() < 10, "Files should be deleted");
 
-    // Check files before restore
-    let files_before_restore = cart.list("/").unwrap();
-    println!("Files before restore: {} entries", files_before_restore.len());
-
     // Restore snapshot
     cart.restore_snapshot(snap_id, &snapshot_dir).unwrap();
 
     // Verify all files are back after restore
-    let files_after = cart.list("/").unwrap();
-    println!("Files after restore: {} entries - {:?}", files_after.len(), files_after);
-
     for i in 0..10 {
-        let data = cart.read(&format!("/file{}.txt", i))
-            .unwrap_or_else(|e| panic!("Failed to read /file{}.txt after restore: {}", i, e));
-        assert_eq!(data, b"data", "File {} has wrong data", i);
+        let data = cart.read(&format!("/file{}.txt", i)).unwrap();
+        assert_eq!(data, b"data");
     }
 
     std::fs::remove_file("snapshot-deletes.cart").ok();
