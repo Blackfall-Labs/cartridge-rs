@@ -2,8 +2,8 @@
 
 **Mutable containers that grow with your data** 📦
 
-[![Crates.io](https://img.shields.io/crates/v/cartridge-rs-rs)](https://crates.io/crates/cartridge-rs-rs)
-[![Documentation](https://docs.rs/cartridge-rs-rs/badge.svg)](https://docs.rs/cartridge-rs-rs)
+[![Crates.io](https://img.shields.io/crates/v/cartridge-rs)](https://crates.io/crates/cartridge-rs)
+[![Documentation](https://docs.rs/cartridge-rs/badge.svg)](https://docs.rs/cartridge-rs)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 [![Tests](https://img.shields.io/badge/tests-234%20passing-brightgreen)]()
 
@@ -556,7 +556,7 @@ _Verified: See `docs/performance.md` and `TESTING_STATUS.md`_
 
 📕 **[LIBRARY_USAGE.md](LIBRARY_USAGE.md)** - Comprehensive usage guide
 📔 **[TODO.md](TODO.md)** - Roadmap & pending features
-📓 **[API Docs](https://docs.rs/cartridge-rs-rs)** - Full API reference
+📓 **[API Docs](https://docs.rs/cartridge-rs)** - Full API reference
 
 ---
 
@@ -707,7 +707,7 @@ Licensed under your choice of:
 
 **Questions? Issues? Ideas?**
 
-[Open an Issue](https://github.com/blackfall-labs/cartridge-rs/issues) · [Read the Docs](https://docs.rs/cartridge-rs-rs) · [View Examples](examples/)
+[Open an Issue](https://github.com/blackfall-labs/cartridge-rs/issues) · [Read the Docs](https://docs.rs/cartridge-rs) · [View Examples](examples/)
 
 **⭐ Star us on GitHub if you find this useful!**
 

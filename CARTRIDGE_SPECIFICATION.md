@@ -2676,8 +2676,8 @@ For implementing a Cartridge v0.2 reader/writer:
 **Source Code:**
 
 - GitHub: https://github.com/blackfall-labs/cartridge-rs
-- Crates.io: https://crates.io/crates/cartridge-rs-rs
-- Documentation: https://docs.rs/cartridge-rs-rs
+- Crates.io: https://crates.io/crates/cartridge-rs
+- Documentation: https://docs.rs/cartridge-rs
 
 ---
 
