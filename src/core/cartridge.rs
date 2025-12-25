@@ -494,19 +494,41 @@ impl Cartridge {
     ) -> Result<()> {
         use crate::snapshot::SnapshotManager;
 
-        let manager = SnapshotManager::new(snapshot_dir)?;
+        let mut manager = SnapshotManager::new(snapshot_dir)?;
 
-        // Load snapshot metadata
-        let metadata = manager.get_snapshot(snapshot_id).ok_or_else(|| {
-            CartridgeError::Allocation(format!("Snapshot not found: {}", snapshot_id))
-        })?;
+        // Load snapshot metadata from disk
+        let metadata = manager.load_snapshot(snapshot_id)?;
 
         // Restore pages
         let restored_pages = manager.restore_snapshot(snapshot_id)?;
 
         // Replace current state
-        *self.pages.lock() = restored_pages;
+        *self.pages.lock() = restored_pages.clone();
         self.header = metadata.header.clone();
+
+        // Reload catalog from restored pages
+        if let Some(catalog_page) = restored_pages.get(&1) {
+            let end = catalog_page.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+            if end > 0 {
+                let btree: btree::BTree = serde_json::from_slice(&catalog_page[..end])
+                    .map_err(|e| CartridgeError::Corruption(
+                        format!("Corrupted catalog B-tree in snapshot: {}", e)
+                    ))?;
+                self.catalog = Catalog::from_btree(1, btree);
+            }
+        }
+
+        // Reload allocator from restored pages
+        if let Some(alloc_page) = restored_pages.get(&2) {
+            let end = alloc_page.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+            if end > 0 {
+                let alloc: HybridAllocator = serde_json::from_slice(&alloc_page[..end])
+                    .map_err(|e| CartridgeError::Corruption(
+                        format!("Corrupted allocator in snapshot: {}", e)
+                    ))?;
+                self.allocator = alloc;
+            }
+        }
 
         let mut dirty_pages = self.dirty_pages.lock();
         dirty_pages.clear();
