@@ -34,7 +34,10 @@ Perfect for **embedded systems, offline apps, data distribution, and compliance*
 ```toml
 [dependencies]
 cartridge-rs = "0.2.4"
+anyhow = "1.0.100" 
 ```
+
+Anyhow is a required dependency of cratridge-rs
 
 ### Hello World
 
