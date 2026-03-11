@@ -22,7 +22,7 @@ const DEFAULT_INITIAL_BLOCKS: usize = 3; // Start minimal by default
 const GROW_THRESHOLD: f64 = 0.10; // Grow when <10% free
 const GROW_FACTOR: usize = 2; // Double size each time
 const DEFAULT_MAX_BLOCKS: usize = 10_000_000; // ~40GB safety limit
-const MANIFEST_PATH: &str = "/.cartridge/manifest.json";
+const MANIFEST_PATH: &str = ".cartridge/manifest.json";
 
 /// Cartridge archive
 ///
@@ -159,10 +159,10 @@ impl Cartridge {
         let manifest = Manifest::new(slug, title, semver::Version::new(0, 1, 0))?;
         let manifest_json = serde_json::to_vec_pretty(&manifest)?;
 
-        // Ensure /.cartridge directory exists
-        cartridge.create_dir("/.cartridge")?;
+        // Ensure .cartridge directory exists
+        cartridge.create_dir(".cartridge")?;
 
-        // Write manifest to /.cartridge/manifest.json
+        // Write manifest to .cartridge/manifest.json
         cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
 
         Ok(cartridge)
@@ -228,10 +228,10 @@ impl Cartridge {
         let manifest = Manifest::new(slug, title, semver::Version::new(0, 1, 0))?;
         let manifest_json = serde_json::to_vec_pretty(&manifest)?;
 
-        // Ensure /.cartridge directory exists
-        cartridge.create_dir("/.cartridge")?;
+        // Ensure .cartridge directory exists
+        cartridge.create_dir(".cartridge")?;
 
-        // Write manifest to /.cartridge/manifest.json
+        // Write manifest to .cartridge/manifest.json
         cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
 
         Ok(cartridge)
@@ -615,10 +615,10 @@ impl Cartridge {
     /// Create a file with content
     pub fn create_file(&mut self, path: &str, content: &[u8]) -> Result<()> {
         // Check IAM policy
-        self.check_access(&Action::Create, path)?;
+        self.check_access(&Action::Create, &path)?;
 
         // Check if file already exists
-        if self.catalog.get(path)?.is_some() {
+        if self.catalog.get(&path)?.is_some() {
             return Err(CartridgeError::Allocation(format!(
                 "File already exists: {}",
                 path
@@ -835,7 +835,10 @@ impl Cartridge {
 
     /// List directory contents
     pub fn list_dir(&self, path: &str) -> Result<Vec<String>> {
-        let prefix = if path.ends_with('/') {
+        // Empty path means list all files (no prefix filter)
+        let prefix = if path.is_empty() {
+            String::new()
+        } else if path.ends_with('/') {
             path.to_string()
         } else {
             format!("{}/", path)
@@ -904,7 +907,7 @@ impl Cartridge {
 
     /// Write/update container manifest
     ///
-    /// Overwrites the existing manifest at /.cartridge/manifest.json
+    /// Overwrites the existing manifest at .cartridge/manifest.json
     pub fn write_manifest(&mut self, manifest: &Manifest) -> Result<()> {
         let manifest_json = serde_json::to_vec_pretty(manifest)?;
 
@@ -913,8 +916,8 @@ impl Cartridge {
             self.write_file(MANIFEST_PATH, &manifest_json)?;
         } else {
             // Ensure directory exists
-            if !self.exists("/.cartridge")? {
-                self.create_dir("/.cartridge")?;
+            if !self.exists(".cartridge")? {
+                self.create_dir(".cartridge")?;
             }
             self.create_file(MANIFEST_PATH, &manifest_json)?;
         }
@@ -1520,7 +1523,7 @@ mod tests {
 
         // Manually create a manifest for in-memory cartridge
         let manifest = Manifest::new("test", "Test", semver::Version::new(1, 0, 0)).unwrap();
-        cart.create_dir("/.cartridge").unwrap();
+        cart.create_dir(".cartridge").unwrap();
         cart.write_manifest(&manifest).unwrap();
 
         // Update using the closure API

@@ -50,7 +50,7 @@ pub enum CartridgeError {
     #[error("Invalid path: path does not contain a valid file name")]
     InvalidPath,
 
-    #[error("Manifest not found: container does not contain /.cartridge/manifest.json")]
+    #[error("Manifest not found: container does not contain .cartridge/manifest.json")]
     ManifestNotFound,
 
     #[error("Manifest validation failed: {0}")]

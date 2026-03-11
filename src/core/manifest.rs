@@ -114,7 +114,7 @@ pub struct Manifest {
 
 impl Manifest {
     /// Manifest file path inside container
-    pub const PATH: &'static str = "/.cartridge/manifest.json";
+    pub const PATH: &'static str = ".cartridge/manifest.json";
 
     /// Create a new manifest with required fields
     ///

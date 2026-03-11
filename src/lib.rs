@@ -148,11 +148,8 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
 
     // Process each file path
     for path in paths {
-        // Skip internal .cartridge directory (with or without leading slash)
-        if path.starts_with(".cartridge/")
-            || path == ".cartridge"
-            || path.starts_with("/.cartridge")
-        {
+        // Skip internal .cartridge directory
+        if path.starts_with(".cartridge/") || path == ".cartridge" {
             continue;
         }
         // Extract name and parent from path
@@ -483,11 +480,7 @@ impl Cartridge {
         debug!("Checking if {} is a directory", path);
 
         // A path is a directory if it has children
-        let prefix = if path.is_empty() {
-            String::new()
-        } else {
-            format!("{}/", path)
-        };
+        let prefix = format!("{}/", path);
 
         let paths = self.inner.list_dir(&prefix)?;
         Ok(!paths.is_empty())
