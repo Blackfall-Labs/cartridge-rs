@@ -49,12 +49,12 @@ pub struct FileMetadata {
 
     /// MIME content type (for S3 compatibility)
     /// Examples: "text/plain", "application/json", "image/png"
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub content_type: Option<String>,
 
     /// User-defined metadata key-value pairs (for S3 compatibility)
     /// Maps to S3 x-amz-meta-* headers
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     pub user_metadata: HashMap<String, String>,
 }
 

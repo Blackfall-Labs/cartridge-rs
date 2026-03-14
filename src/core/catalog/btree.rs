@@ -407,6 +407,25 @@ impl BTree {
         self.root_page
     }
 
+    /// Convert legacy BTree into the new BTreeMap-backed Catalog.
+    ///
+    /// Walks all leaf nodes and extracts (key, value) pairs into a Catalog.
+    /// Used for backward-compatible migration from old JSON-serialized catalogs.
+    pub fn into_catalog(self, root_page: u64) -> super::Catalog {
+        let mut catalog = super::Catalog::new(root_page);
+        // Walk all nodes, extract leaf entries
+        for node in self.nodes.values() {
+            if node.is_leaf() {
+                for entry in &node.entries {
+                    if let Some(ref value) = entry.value {
+                        let _ = catalog.insert(&entry.key, value.clone());
+                    }
+                }
+            }
+        }
+        catalog
+    }
+
     /// Get tree height (for testing/debugging)
     pub fn height(&self) -> usize {
         let mut current = self.root_page;

@@ -15,7 +15,10 @@ mod vfs;
 mod tests;
 
 pub use file::CartridgeFile;
-pub use vfs::{register_vfs, unregister_vfs, CartridgeVFS, VFS_NAME};
+pub use vfs::{
+    register_vfs, register_named_vfs, unregister_vfs, unregister_named_vfs,
+    generate_vfs_name, CartridgeVFS, VFS_NAME,
+};
 
 use crate::error::CartridgeError;
 

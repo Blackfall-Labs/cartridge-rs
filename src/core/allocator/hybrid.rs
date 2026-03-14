@@ -105,6 +105,19 @@ impl HybridAllocator {
 
         Ok(())
     }
+
+    /// Mark specific pages as allocated in both sub-allocators, adjusting all
+    /// internal counters.
+    ///
+    /// Used after loading the allocator from disk to account for the allocator's
+    /// own overflow pages (which were allocated after the allocator was serialized
+    /// and therefore aren't reflected in the deserialized state).
+    pub fn mark_pages_allocated(&mut self, pages: &[u64]) -> Result<()> {
+        self.bitmap.mark_allocated_with_count(pages)?;
+        self.extent.mark_allocated(pages)?;
+        self.free_blocks = self.free_blocks.saturating_sub(pages.len());
+        Ok(())
+    }
 }
 
 /// Statistics about hybrid allocator usage

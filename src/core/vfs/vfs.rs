@@ -2,6 +2,10 @@
 //!
 //! Implements the sqlite3_vfs interface to provide filesystem operations
 //! backed by Cartridge archive storage.
+//!
+//! Supports multiple simultaneous cartridge VFS instances via unique names.
+//! Each cartridge registers its own VFS (`cartridge-{id}`) so multiple
+//! cartridges can have SQLite databases open at the same time.
 
 use super::super::cartridge::Cartridge;
 use crate::error::{CartridgeError, Result};
@@ -11,22 +15,31 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Name of the Cartridge VFS as registered with SQLite
+/// Default VFS name (for backwards compatibility with single-cartridge usage)
 pub const VFS_NAME: &str = "cartridge";
+
+/// Global counter for generating unique VFS names
+static VFS_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Cartridge VFS instance
 pub struct CartridgeVFS {
     /// Underlying cartridge archive
     cartridge: Arc<Mutex<Cartridge>>,
-    /// VFS name (C string)
+    /// VFS name (C string) — unique per instance
     name: CString,
 }
 
 impl CartridgeVFS {
-    /// Create a new VFS for the given cartridge
+    /// Create a new VFS with the default name (single-cartridge compat)
     pub fn new(cartridge: Arc<Mutex<Cartridge>>) -> Result<Self> {
-        let name = CString::new(VFS_NAME)
+        Self::with_name(VFS_NAME, cartridge)
+    }
+
+    /// Create a new VFS with a specific name
+    pub fn with_name(name: &str, cartridge: Arc<Mutex<Cartridge>>) -> Result<Self> {
+        let name = CString::new(name)
             .map_err(|e| CartridgeError::Allocation(format!("Invalid VFS name: {}", e)))?;
 
         Ok(Self { cartridge, name })
@@ -36,11 +49,32 @@ impl CartridgeVFS {
     pub fn cartridge(&self) -> &Arc<Mutex<Cartridge>> {
         &self.cartridge
     }
+
+    /// Get the VFS name as a string
+    pub fn name_str(&self) -> &str {
+        self.name.to_str().unwrap_or(VFS_NAME)
+    }
 }
 
-/// Register the Cartridge VFS with SQLite
+/// Generate a unique VFS name for a cartridge instance.
+pub fn generate_vfs_name() -> String {
+    let id = VFS_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("cartridge-{id}")
+}
+
+/// Register a cartridge VFS with the default name.
+/// For single-cartridge usage or backwards compatibility.
 pub fn register_vfs(cartridge: Arc<Mutex<Cartridge>>) -> Result<()> {
-    let vfs = CartridgeVFS::new(cartridge)?;
+    register_named_vfs(VFS_NAME, cartridge)
+}
+
+/// Register a cartridge VFS with a specific name.
+/// Use this for multi-cartridge scenarios where each cartridge needs its own VFS.
+///
+/// Returns the VFS name that was registered (same as the `name` parameter).
+/// Use this name in SQLite URI: `file:db.db?vfs={name}`
+pub fn register_named_vfs(name: &str, cartridge: Arc<Mutex<Cartridge>>) -> Result<()> {
+    let vfs = CartridgeVFS::with_name(name, cartridge)?;
     let vfs_ptr = Box::into_raw(Box::new(vfs));
 
     // Create the sqlite3_vfs structure
@@ -84,13 +118,18 @@ pub fn register_vfs(cartridge: Arc<Mutex<Cartridge>>) -> Result<()> {
     Ok(())
 }
 
-/// Unregister the Cartridge VFS from SQLite
+/// Unregister the default-named Cartridge VFS from SQLite.
 pub fn unregister_vfs() -> Result<()> {
-    let name = CString::new(VFS_NAME)
+    unregister_named_vfs(VFS_NAME)
+}
+
+/// Unregister a named Cartridge VFS from SQLite.
+pub fn unregister_named_vfs(name: &str) -> Result<()> {
+    let cname = CString::new(name)
         .map_err(|e| CartridgeError::Allocation(format!("Invalid VFS name: {}", e)))?;
 
     unsafe {
-        let vfs_ptr = ffi::sqlite3_vfs_find(name.as_ptr());
+        let vfs_ptr = ffi::sqlite3_vfs_find(cname.as_ptr());
         if vfs_ptr.is_null() {
             return Ok(()); // Already unregistered
         }
@@ -120,7 +159,6 @@ unsafe extern "C" fn vfs_open(
     flags: c_int,
     p_out_flags: *mut c_int,
 ) -> c_int {
-    // Implementation will go in file.rs
     super::file::file_open(vfs, z_name, file, flags, p_out_flags)
 }
 

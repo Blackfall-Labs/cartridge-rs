@@ -70,12 +70,14 @@ pub use crate::core::{
     manifest::Manifest,
     snapshot::{SnapshotManager, SnapshotMetadata},
     validation::ContainerSlug,
+    vfs::{register_vfs, register_named_vfs, unregister_vfs, unregister_named_vfs, generate_vfs_name, VFS_NAME},
 };
 
 use crate::core::Cartridge as CoreCartridge;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{debug, info};
 
 /// Rich metadata about a file or directory in the archive
@@ -261,6 +263,8 @@ fn paths_to_entries(cart: &CoreCartridge, paths: &[String], _prefix: &str) -> Re
 /// ```
 pub struct Cartridge {
     inner: CoreCartridge,
+    /// VFS name if this cartridge has a registered VFS (for SQLite database access)
+    vfs_name: Option<String>,
 }
 
 impl Cartridge {
@@ -283,7 +287,7 @@ impl Cartridge {
     pub fn create(slug: &str, title: &str) -> Result<Self> {
         info!("Creating cartridge with slug '{}', title '{}'", slug, title);
         let inner = CoreCartridge::create(slug, title)?;
-        Ok(Cartridge { inner })
+        Ok(Cartridge { inner, vfs_name: None })
     }
 
     /// Create a new Cartridge archive at a specific path
@@ -307,7 +311,7 @@ impl Cartridge {
             title
         );
         let inner = CoreCartridge::create_at(path, slug, title)?;
-        Ok(Cartridge { inner })
+        Ok(Cartridge { inner, vfs_name: None })
     }
 
     /// Open an existing Cartridge archive
@@ -323,7 +327,7 @@ impl Cartridge {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         info!("Opening cartridge at {:?}", path.as_ref());
         let inner = CoreCartridge::open(path)?;
-        Ok(Cartridge { inner })
+        Ok(Cartridge { inner, vfs_name: None })
     }
 
     /// Write data to a file in the archive
@@ -786,6 +790,16 @@ impl Cartridge {
         self.inner.is_encrypted()
     }
 
+    /// Get the VFS name for this cartridge, if one has been registered.
+    pub fn vfs_name(&self) -> Option<&str> {
+        self.vfs_name.as_deref()
+    }
+
+    /// Set the VFS name (called by `CartridgeDatabase::new` after registration).
+    pub(crate) fn set_vfs_name(&mut self, name: String) {
+        self.vfs_name = Some(name);
+    }
+
     /// Get access to the underlying core Cartridge for advanced operations
     ///
     /// Use this when you need features not exposed by the high-level API:
@@ -812,6 +826,116 @@ impl Cartridge {
     /// Get mutable access to the underlying core Cartridge
     pub fn inner_mut(&mut self) -> &mut CoreCartridge {
         &mut self.inner
+    }
+
+    /// Consume this Cartridge and return the underlying CoreCartridge.
+    ///
+    /// Use this to hand ownership to `CartridgeDatabase::from_core()`.
+    pub fn into_inner(self) -> CoreCartridge {
+        self.inner
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CartridgeDatabase — high-level API for SQLite databases inside cartridges
+// ---------------------------------------------------------------------------
+
+/// Manages SQLite databases stored inside a cartridge.
+///
+/// Holds the cartridge in an `Arc<Mutex<CoreCartridge>>` so the VFS callbacks
+/// can access it from SQLite's I/O layer. Use this when you need to open
+/// SQLite databases inside a cartridge file.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use cartridge_rs::{Cartridge, CartridgeDatabase};
+///
+/// let cart = Cartridge::create("project", "My Project")?;
+/// let db = CartridgeDatabase::new(cart)?;
+/// let conn = db.open("vcs.db")?;
+/// conn.execute("CREATE TABLE blobs (id INTEGER PRIMARY KEY)", [])?;
+/// ```
+pub struct CartridgeDatabase {
+    /// Shared cartridge for VFS access
+    inner: Arc<parking_lot::Mutex<CoreCartridge>>,
+    /// Registered VFS name
+    vfs_name: String,
+}
+
+impl CartridgeDatabase {
+    /// Create a new CartridgeDatabase from a Cartridge.
+    ///
+    /// Consumes the cartridge's inner state and wraps it in Arc<Mutex> for VFS sharing.
+    /// Registers a uniquely-named VFS with SQLite for this cartridge.
+    pub fn from_core(core: CoreCartridge) -> Result<Self> {
+        let vfs_name = crate::core::vfs::generate_vfs_name();
+        let inner = Arc::new(parking_lot::Mutex::new(core));
+
+        crate::core::vfs::register_named_vfs(&vfs_name, Arc::clone(&inner))?;
+
+        Ok(Self { inner, vfs_name })
+    }
+
+    /// Open a SQLite database at the given path inside the cartridge.
+    /// Creates the database if it doesn't exist.
+    pub fn open(&self, db_path: &str) -> Result<rusqlite::Connection> {
+        let uri = format!("file:{db_path}?vfs={}", self.vfs_name);
+        let conn = rusqlite::Connection::open_with_flags(
+            &uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).map_err(|e| CartridgeError::Allocation(format!("SQLite open via cartridge VFS failed: {e}")))?;
+
+        Ok(conn)
+    }
+
+    /// Get the VFS name for this cartridge's databases.
+    pub fn vfs_name(&self) -> &str {
+        &self.vfs_name
+    }
+
+    /// Get shared access to the underlying core cartridge.
+    pub fn inner(&self) -> &Arc<parking_lot::Mutex<CoreCartridge>> {
+        &self.inner
+    }
+
+    /// Flush pending changes in the cartridge to disk.
+    pub fn flush(&self) -> Result<()> {
+        self.inner.lock().flush()?;
+        Ok(())
+    }
+
+    /// Check if a file exists in the cartridge.
+    pub fn exists(&self, path: &str) -> Result<bool> {
+        Ok(self.inner.lock().exists(path)?)
+    }
+
+    /// Read a file from the cartridge (non-database files).
+    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
+        Ok(self.inner.lock().read_file(path)?)
+    }
+
+    /// Write a file to the cartridge (non-database files).
+    pub fn write(&self, path: &str, content: &[u8]) -> Result<()> {
+        let mut cart = self.inner.lock();
+        if cart.exists(path)? {
+            cart.write_file(path, content)?;
+        } else {
+            cart.create_file(path, content)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CartridgeDatabase {
+    fn drop(&mut self) {
+        // Best-effort flush and VFS cleanup
+        if let Some(mut cart) = self.inner.try_lock() {
+            let _ = cart.flush();
+        }
+        let _ = crate::core::vfs::unregister_named_vfs(&self.vfs_name);
     }
 }
 
@@ -910,7 +1034,7 @@ impl CartridgeBuilder {
             debug!("Audit logging enabled");
         }
 
-        Ok(Cartridge { inner })
+        Ok(Cartridge { inner, vfs_name: None })
     }
 }
 

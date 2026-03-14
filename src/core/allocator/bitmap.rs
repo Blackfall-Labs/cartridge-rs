@@ -140,6 +140,30 @@ impl BitmapAllocator {
         Ok(())
     }
 
+    /// Mark specific blocks as allocated AND adjust the free_blocks counter.
+    ///
+    /// Used when recovering allocator state on load (e.g., for overflow pages
+    /// that were allocated after the allocator was serialized).
+    pub fn mark_allocated_with_count(&mut self, blocks: &[u64]) -> Result<()> {
+        let mut newly_allocated = 0usize;
+        for &block_id in blocks {
+            if block_id >= self.total_blocks as u64 {
+                return Err(CartridgeError::InvalidBlockId(block_id));
+            }
+
+            let word_idx = (block_id / 64) as usize;
+            let bit_idx = (block_id % 64) as usize;
+
+            // Only count if actually transitioning from free to allocated
+            if (self.bitmap[word_idx] & (1u64 << bit_idx)) == 0 {
+                self.bitmap[word_idx] |= 1u64 << bit_idx;
+                newly_allocated += 1;
+            }
+        }
+        self.free_blocks = self.free_blocks.saturating_sub(newly_allocated);
+        Ok(())
+    }
+
     /// Mark specific blocks as free (without changing free_blocks counter)
     ///
     /// Used by HybridAllocator to keep allocators in sync

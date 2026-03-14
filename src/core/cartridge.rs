@@ -4,7 +4,7 @@
 
 use crate::allocator::{hybrid::HybridAllocator, BlockAllocator};
 use crate::audit::{AuditLogger, Operation};
-use crate::catalog::{btree, Catalog, FileMetadata, FileType};
+use crate::catalog::{Catalog, FileMetadata, FileType};
 use crate::encryption::EncryptionConfig;
 use crate::error::{CartridgeError, Result};
 use crate::header::{Header, PAGE_SIZE};
@@ -67,6 +67,12 @@ pub struct Cartridge {
 
     /// Maximum blocks allowed (prevents runaway growth)
     max_blocks: usize,
+
+    /// Pages allocated for catalog overflow (multi-page serialization)
+    catalog_overflow_pages: Vec<u64>,
+
+    /// Pages allocated for allocator overflow (multi-page serialization)
+    allocator_overflow_pages: Vec<u64>,
 }
 
 impl Cartridge {
@@ -98,6 +104,8 @@ impl Cartridge {
             encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
+            catalog_overflow_pages: Vec::new(),
+            allocator_overflow_pages: Vec::new(),
         }
     }
 
@@ -153,6 +161,8 @@ impl Cartridge {
             encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
+            catalog_overflow_pages: Vec::new(),
+            allocator_overflow_pages: Vec::new(),
         };
 
         // Create manifest
@@ -222,6 +232,8 @@ impl Cartridge {
             encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
+            catalog_overflow_pages: Vec::new(),
+            allocator_overflow_pages: Vec::new(),
         };
 
         // Create manifest
@@ -248,9 +260,20 @@ impl Cartridge {
         let mut file = CartridgeFile::open(normalized_path)?;
         let header = file.read_header()?;
 
-        // Load catalog and allocator from disk
-        let catalog = Self::load_catalog(&mut file, header.btree_root_page)?;
-        let allocator = Self::load_allocator(&mut file, header.total_blocks as usize)?;
+        // Load allocator first (catalog overflow pages are tracked in the allocator)
+        let (mut allocator, allocator_overflow_pages) =
+            Self::load_allocator_multi(&mut file, header.total_blocks as usize)?;
+
+        // The serialized allocator doesn't know about its own overflow pages
+        // (they were allocated after serialization). Mark them as allocated now
+        // so future flush() calls don't double-allocate them.
+        if !allocator_overflow_pages.is_empty() {
+            allocator.mark_pages_allocated(&allocator_overflow_pages)?;
+        }
+
+        // Load catalog (may span multiple pages)
+        let (catalog, catalog_overflow_pages) =
+            Self::load_catalog_multi(&mut file, header.btree_root_page)?;
 
         let cartridge = Cartridge {
             header,
@@ -266,6 +289,8 @@ impl Cartridge {
             encryption_config: None,
             auto_grow: true,
             max_blocks: DEFAULT_MAX_BLOCKS,
+            catalog_overflow_pages,
+            allocator_overflow_pages,
         };
 
         // Try to load manifest (optional for backwards compatibility)
@@ -286,38 +311,55 @@ impl Cartridge {
 
         let mut file = self.file.as_ref().unwrap().lock();
 
-        // Write header
+        // Write header (updated below after we know overflow state)
         file.write_header(&self.header)?;
 
-        // Serialize and write catalog state (uses page 1 for now)
-        let catalog_data = serde_json::to_vec(self.catalog.btree())?;
-        if catalog_data.len() >= PAGE_SIZE {
-            return Err(CartridgeError::Allocation(
-                format!("Catalog too large for single page: {} bytes", catalog_data.len())
-            ));
+        // --- Free ALL old overflow pages before any new allocations ---
+        // This prevents a bug where old allocator overflow pages overlap with
+        // newly allocated catalog overflow pages: if we freed allocator overflow
+        // AFTER catalog allocation, an old allocator overflow page that was just
+        // reallocated for catalog overflow would be incorrectly freed.
+        let old_overflow_count = self.catalog_overflow_pages.len()
+            + self.allocator_overflow_pages.len();
+        if !self.catalog_overflow_pages.is_empty() {
+            self.allocator.free(&self.catalog_overflow_pages)?;
+            self.catalog_overflow_pages.clear();
         }
-        let mut catalog_page_data = vec![0u8; PAGE_SIZE];
-        catalog_page_data[..catalog_data.len()].copy_from_slice(&catalog_data);
-        file.write_page_data(1, &catalog_page_data)?;
-
-        // Also add catalog page to in-memory pages for snapshots
-        self.pages.lock().insert(1, catalog_page_data);
-
-        // Serialize and write allocator state (uses page 2 for now)
-        let allocator_data = serde_json::to_vec(&self.allocator)?;
-        if allocator_data.len() >= PAGE_SIZE {
-            return Err(CartridgeError::Allocation(
-                format!("Allocator state too large for single page: {} bytes", allocator_data.len())
-            ));
+        if !self.allocator_overflow_pages.is_empty() {
+            self.allocator.free(&self.allocator_overflow_pages)?;
+            self.allocator_overflow_pages.clear();
         }
-        let mut allocator_page_data = vec![0u8; PAGE_SIZE];
-        allocator_page_data[..allocator_data.len()].copy_from_slice(&allocator_data);
-        file.write_page_data(2, &allocator_page_data)?;
+        if old_overflow_count > 0 {
+            self.header.free_blocks = self.allocator.free_blocks() as u64;
+        }
 
-        // Also add allocator page to in-memory pages for snapshots
-        self.pages.lock().insert(2, allocator_page_data);
+        // --- Catalog: serialize with bincode, write multi-page ---
+        let catalog_data = self.catalog.to_bytes()?;
+        self.catalog_overflow_pages = Self::write_multi_page_blob(
+            &mut file,
+            &self.pages,
+            1,
+            &catalog_data,
+            &mut self.allocator,
+            &mut self.header,
+        )?;
 
-        // Write dirty pages
+        // --- Allocator: serialize with bincode, write multi-page ---
+        let allocator_data = bincode::serialize(&self.allocator)
+            .map_err(|e| CartridgeError::Corruption(format!("allocator serialize: {e}")))?;
+        self.allocator_overflow_pages = Self::write_multi_page_blob(
+            &mut file,
+            &self.pages,
+            2,
+            &allocator_data,
+            &mut self.allocator,
+            &mut self.header,
+        )?;
+
+        // Re-write header (total_blocks / free_blocks may have changed from overflow)
+        file.write_header(&self.header)?;
+
+        // Write dirty content pages
         let pages = self.pages.lock();
         let mut dirty_pages = self.dirty_pages.lock();
         for &page_id in dirty_pages.iter() {
@@ -332,48 +374,224 @@ impl Cartridge {
         Ok(())
     }
 
-    /// Load catalog state from disk
-    fn load_catalog(file: &mut CartridgeFile, root_page: u64) -> Result<Catalog> {
-        // Read from page 1
-        let page_data = file.read_page_data(1)?;
+    // =========================================================================
+    // Multi-page blob serialization
+    // =========================================================================
 
-        // Find the end of JSON data (first null byte or end of page)
-        let end = page_data.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+    /// Multi-page blob header discriminator.
+    /// Old format: page starts with 0x7B (`{`) — raw JSON.
+    /// New format: page starts with 0x00 — multi-page header.
+    const MULTI_PAGE_MAGIC: u8 = 0x00;
 
-        if end == 0 {
-            // Empty catalog
-            return Ok(Catalog::new(root_page));
+    /// Multi-page header size: 1 (magic) + 4 (data_len) + 2 (num_overflow) = 7 bytes.
+    /// Followed by num_overflow * 8 bytes of overflow page IDs (u64 LE each).
+    const MULTI_PAGE_HEADER_FIXED: usize = 7;
+
+    /// Write a blob that may span multiple pages.
+    ///
+    /// If the data fits in one page, writes raw data (backward compatible).
+    /// If it doesn't, writes a multi-page header to the primary page and
+    /// allocates overflow pages from the allocator for the remaining data.
+    ///
+    /// Returns the list of overflow page IDs allocated (empty if single-page).
+    fn write_multi_page_blob(
+        file: &mut CartridgeFile,
+        pages_cache: &Mutex<std::collections::HashMap<u64, Vec<u8>>>,
+        primary_page: u64,
+        data: &[u8],
+        allocator: &mut HybridAllocator,
+        header: &mut Header,
+    ) -> Result<Vec<u64>> {
+        // Always write with the multi-page header format so we preserve
+        // the exact data length. Bincode data can contain embedded 0x00 bytes,
+        // so we can't rely on null-termination for single-page detection.
+        //
+        // Primary page layout: [1 magic][4 data_len][2 num_overflow][N*8 page_ids][data_chunk]
+
+        if data.len() + Self::MULTI_PAGE_HEADER_FIXED <= PAGE_SIZE {
+            // Fits in one page with header — no overflow pages needed
+            let mut page = vec![0u8; PAGE_SIZE];
+            page[0] = Self::MULTI_PAGE_MAGIC;
+            page[1..5].copy_from_slice(&(data.len() as u32).to_le_bytes());
+            page[5..7].copy_from_slice(&0u16.to_le_bytes()); // 0 overflow pages
+            page[Self::MULTI_PAGE_HEADER_FIXED..Self::MULTI_PAGE_HEADER_FIXED + data.len()]
+                .copy_from_slice(data);
+            file.write_page_data(primary_page, &page)?;
+            pages_cache.lock().insert(primary_page, page);
+            return Ok(vec![]);
         }
 
-        // Deserialize B-tree with corruption detection
-        let btree: btree::BTree = serde_json::from_slice(&page_data[..end])
-            .map_err(|e| CartridgeError::Corruption(
-                format!("Corrupted catalog B-tree: {}", e)
-            ))?;
+        // Calculate overflow needed
+        let mut num_overflow: u16 = 1;
+        loop {
+            let header_size = Self::MULTI_PAGE_HEADER_FIXED + (num_overflow as usize) * 8;
+            let first_chunk = PAGE_SIZE - header_size;
+            let remaining = data.len().saturating_sub(first_chunk);
+            let needed = (remaining + PAGE_SIZE - 1) / PAGE_SIZE;
+            if needed <= num_overflow as usize {
+                break;
+            }
+            num_overflow = needed as u16;
+        }
 
-        Ok(Catalog::from_btree(root_page, btree))
+        // Allocate overflow pages
+        let overflow_size = (num_overflow as usize) * PAGE_SIZE;
+        // Ensure capacity (auto-grow if needed)
+        while allocator.free_blocks() < num_overflow as usize {
+            // Grow the container
+            let current = header.total_blocks as usize;
+            let new_total = (current * GROW_FACTOR).min(DEFAULT_MAX_BLOCKS);
+            if new_total == current {
+                return Err(CartridgeError::OutOfSpace);
+            }
+            file.extend(new_total)?;
+            header.total_blocks = new_total as u64;
+            allocator.extend_capacity(new_total)?;
+            header.free_blocks = allocator.free_blocks() as u64;
+        }
+
+        let overflow_page_ids = allocator.allocate(overflow_size as u64)?;
+        header.free_blocks = allocator.free_blocks() as u64;
+
+        // Build primary page
+        let header_size = Self::MULTI_PAGE_HEADER_FIXED + overflow_page_ids.len() * 8;
+        let first_chunk_size = (PAGE_SIZE - header_size).min(data.len());
+        let mut page = vec![0u8; PAGE_SIZE];
+
+        // Header: magic + data_len + num_overflow + page_ids
+        page[0] = Self::MULTI_PAGE_MAGIC;
+        page[1..5].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        page[5..7].copy_from_slice(&(overflow_page_ids.len() as u16).to_le_bytes());
+        for (i, &pid) in overflow_page_ids.iter().enumerate() {
+            let off = 7 + i * 8;
+            page[off..off + 8].copy_from_slice(&pid.to_le_bytes());
+        }
+
+        // First data chunk
+        page[header_size..header_size + first_chunk_size]
+            .copy_from_slice(&data[..first_chunk_size]);
+        file.write_page_data(primary_page, &page)?;
+        pages_cache.lock().insert(primary_page, page);
+
+        // Write overflow pages
+        let mut offset = first_chunk_size;
+        for &pid in &overflow_page_ids {
+            let mut opage = vec![0u8; PAGE_SIZE];
+            let chunk = PAGE_SIZE.min(data.len() - offset);
+            opage[..chunk].copy_from_slice(&data[offset..offset + chunk]);
+            file.write_page_data(pid, &opage)?;
+            pages_cache.lock().insert(pid, opage);
+            offset += chunk;
+        }
+
+        Ok(overflow_page_ids)
     }
 
-    /// Load allocator state from disk
-    fn load_allocator(file: &mut CartridgeFile, total_blocks: usize) -> Result<HybridAllocator> {
-        // Read from page 2
-        let page_data = file.read_page_data(2)?;
+    /// Read a multi-page blob from disk.
+    ///
+    /// Detects old single-page format (starts with `{`) vs new multi-page
+    /// format (starts with 0x00). Returns the reassembled data and overflow
+    /// page IDs (empty for single-page).
+    fn read_multi_page_blob(
+        file: &mut CartridgeFile,
+        primary_page: u64,
+    ) -> Result<(Vec<u8>, Vec<u64>)> {
+        let page_data = file.read_page_data(primary_page)?;
 
-        // Find the end of JSON data
-        let end = page_data.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+        if page_data[0] == Self::MULTI_PAGE_MAGIC && page_data.len() >= Self::MULTI_PAGE_HEADER_FIXED {
+            // New multi-page format
+            let data_len = u32::from_le_bytes([
+                page_data[1], page_data[2], page_data[3], page_data[4],
+            ]) as usize;
+            let num_overflow = u16::from_le_bytes([
+                page_data[5], page_data[6],
+            ]) as usize;
 
-        if end == 0 {
-            // Empty allocator
-            return Ok(HybridAllocator::new(total_blocks));
+            // Read overflow page IDs
+            let mut overflow_pages = Vec::with_capacity(num_overflow);
+            for i in 0..num_overflow {
+                let off = 7 + i * 8;
+                let pid = u64::from_le_bytes([
+                    page_data[off], page_data[off + 1], page_data[off + 2], page_data[off + 3],
+                    page_data[off + 4], page_data[off + 5], page_data[off + 6], page_data[off + 7],
+                ]);
+                overflow_pages.push(pid);
+            }
+
+            let header_size = Self::MULTI_PAGE_HEADER_FIXED + num_overflow * 8;
+            let first_chunk_size = (PAGE_SIZE - header_size).min(data_len);
+
+            let mut data = Vec::with_capacity(data_len);
+            data.extend_from_slice(&page_data[header_size..header_size + first_chunk_size]);
+
+            // Read overflow pages
+            for &pid in &overflow_pages {
+                let opage = file.read_page_data(pid)?;
+                let remaining = data_len - data.len();
+                let chunk = PAGE_SIZE.min(remaining);
+                data.extend_from_slice(&opage[..chunk]);
+            }
+
+            Ok((data, overflow_pages))
+        } else {
+            // Old single-page format: raw JSON terminated by null or end of page
+            let end = page_data.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+            Ok((page_data[..end].to_vec(), vec![]))
+        }
+    }
+
+    /// Load catalog state from disk (supports multi-page, bincode + legacy JSON)
+    fn load_catalog_multi(
+        file: &mut CartridgeFile,
+        root_page: u64,
+    ) -> Result<(Catalog, Vec<u64>)> {
+        let (data, overflow_pages) = Self::read_multi_page_blob(file, 1)?;
+
+        if data.is_empty() {
+            return Ok((Catalog::new(root_page), vec![]));
         }
 
-        // Deserialize allocator with corruption detection
-        let allocator: HybridAllocator = serde_json::from_slice(&page_data[..end])
-            .map_err(|e| CartridgeError::Corruption(
-                format!("Corrupted allocator state: {}", e)
-            ))?;
+        // Try bincode first (new format), fall back to legacy JSON
+        let catalog = if data.first() == Some(&b'{') {
+            // Legacy JSON format (old custom BTree)
+            use crate::catalog::btree;
+            let btree: btree::BTree = serde_json::from_slice(&data)
+                .map_err(|e| CartridgeError::Corruption(
+                    format!("Corrupted legacy catalog: {}", e)
+                ))?;
+            btree.into_catalog(root_page)
+        } else {
+            Catalog::from_bytes(&data)?
+        };
 
-        Ok(allocator)
+        Ok((catalog, overflow_pages))
+    }
+
+    /// Load allocator state from disk (supports multi-page, bincode + legacy JSON)
+    fn load_allocator_multi(
+        file: &mut CartridgeFile,
+        total_blocks: usize,
+    ) -> Result<(HybridAllocator, Vec<u64>)> {
+        let (data, overflow_pages) = Self::read_multi_page_blob(file, 2)?;
+
+        if data.is_empty() {
+            return Ok((HybridAllocator::new(total_blocks), vec![]));
+        }
+
+        // Try bincode first (new format), fall back to legacy JSON
+        let allocator = if data.first() == Some(&b'{') {
+            serde_json::from_slice(&data)
+                .map_err(|e| CartridgeError::Corruption(
+                    format!("Corrupted legacy allocator: {}", e)
+                ))?
+        } else {
+            bincode::deserialize(&data)
+                .map_err(|e| CartridgeError::Corruption(
+                    format!("Corrupted allocator: {}", e)
+                ))?
+        };
+
+        Ok((allocator, overflow_pages))
     }
 
     /// Close the cartridge, flushing all changes
@@ -563,27 +781,55 @@ impl Cartridge {
         *self.pages.lock() = restored_pages.clone();
         self.header = metadata.header.clone();
 
-        // Reload catalog from restored pages
-        if let Some(catalog_page) = restored_pages.get(&1) {
+        // Reload catalog and allocator from restored pages (supports multi-page)
+        // We need to read from disk since overflow pages may not be in the map
+        if let Some(ref file_mutex) = self.file {
+            let mut file = file_mutex.lock();
+            let (catalog, cat_overflow) =
+                Self::load_catalog_multi(&mut file, self.header.btree_root_page)?;
+            self.catalog = catalog;
+            self.catalog_overflow_pages = cat_overflow;
+
+            let (mut allocator, alloc_overflow) =
+                Self::load_allocator_multi(&mut file, self.header.total_blocks as usize)?;
+            if !alloc_overflow.is_empty() {
+                let _ = allocator.mark_pages_allocated(&alloc_overflow);
+            }
+            self.allocator = allocator;
+            self.allocator_overflow_pages = alloc_overflow;
+        } else if let Some(catalog_page) = restored_pages.get(&1) {
+            // In-memory only: parse from page data directly
             let end = catalog_page.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
             if end > 0 {
-                let btree: btree::BTree = serde_json::from_slice(&catalog_page[..end])
-                    .map_err(|e| CartridgeError::Corruption(
-                        format!("Corrupted catalog B-tree in snapshot: {}", e)
-                    ))?;
-                self.catalog = Catalog::from_btree(1, btree);
+                let data = &catalog_page[..end];
+                self.catalog = if data.first() == Some(&b'{') {
+                    // Legacy JSON
+                    use crate::catalog::btree;
+                    let btree: btree::BTree = serde_json::from_slice(data)
+                        .map_err(|e| CartridgeError::Corruption(
+                            format!("Corrupted legacy catalog in snapshot: {}", e)
+                        ))?;
+                    btree.into_catalog(1)
+                } else {
+                    Catalog::from_bytes(data)?
+                };
             }
-        }
-
-        // Reload allocator from restored pages
-        if let Some(alloc_page) = restored_pages.get(&2) {
-            let end = alloc_page.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
-            if end > 0 {
-                let alloc: HybridAllocator = serde_json::from_slice(&alloc_page[..end])
-                    .map_err(|e| CartridgeError::Corruption(
-                        format!("Corrupted allocator in snapshot: {}", e)
-                    ))?;
-                self.allocator = alloc;
+            if let Some(alloc_page) = restored_pages.get(&2) {
+                let end = alloc_page.iter().position(|&b| b == 0).unwrap_or(PAGE_SIZE);
+                if end > 0 {
+                    let data = &alloc_page[..end];
+                    self.allocator = if data.first() == Some(&b'{') {
+                        serde_json::from_slice(data)
+                            .map_err(|e| CartridgeError::Corruption(
+                                format!("Corrupted legacy allocator in snapshot: {}", e)
+                            ))?
+                    } else {
+                        bincode::deserialize(data)
+                            .map_err(|e| CartridgeError::Corruption(
+                                format!("Corrupted allocator in snapshot: {}", e)
+                            ))?
+                    };
+                }
             }
         }
 
@@ -1565,6 +1811,264 @@ mod tests {
 
         // Should still work after cache clear
         cart.read_file("/test.txt").unwrap();
+    }
+
+    #[test]
+    fn test_multi_page_catalog_flush_and_reload() {
+        // Create a disk-backed cartridge with many files to overflow the catalog
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large-catalog");
+
+        let mut cart = Cartridge::create_at(&path, "large-catalog", "Large Catalog Test").unwrap();
+
+        // Insert enough files to make the catalog exceed PAGE_SIZE (4096 bytes)
+        // Each entry is roughly ~150 bytes in JSON, so ~30 entries should overflow
+        for i in 0..200 {
+            let filename = format!("dir/subdir/file-with-a-long-name-{:04}.dat", i);
+            let content = format!("content-{}", i);
+            cart.create_file(&filename, content.as_bytes()).unwrap();
+        }
+
+        // Verify catalog bincode would exceed single page
+        let catalog_data = cart.catalog.to_bytes().unwrap();
+        assert!(
+            catalog_data.len() > PAGE_SIZE,
+            "Catalog should exceed single page: {} bytes",
+            catalog_data.len()
+        );
+
+        // Flush should succeed (was previously an error)
+        cart.flush().unwrap();
+
+        // Overflow pages should have been allocated
+        assert!(
+            !cart.catalog_overflow_pages.is_empty(),
+            "Should have catalog overflow pages"
+        );
+
+        // Close and reopen
+        drop(cart);
+        let cart2 = Cartridge::open(&path).unwrap();
+
+        // Verify all files are readable after reload
+        for i in 0..200 {
+            let filename = format!("dir/subdir/file-with-a-long-name-{:04}.dat", i);
+            let content = cart2.read_file(&filename).unwrap();
+            assert_eq!(content, format!("content-{}", i).as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_backward_compatible_single_page_catalog() {
+        // Small cartridge should still use single-page format (backward compatible)
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("small-catalog");
+
+        let mut cart = Cartridge::create_at(&path, "small-catalog", "Small Catalog Test").unwrap();
+        cart.create_file("hello.txt", b"world").unwrap();
+        cart.flush().unwrap();
+
+        // Should have no overflow pages
+        assert!(cart.catalog_overflow_pages.is_empty());
+        assert!(cart.allocator_overflow_pages.is_empty());
+
+        // Reopen and verify
+        drop(cart);
+        let cart2 = Cartridge::open(&path).unwrap();
+        assert_eq!(cart2.read_file("hello.txt").unwrap(), b"world");
+    }
+
+    #[test]
+    fn test_multi_page_catalog_repeated_flush() {
+        // Verify that overflow pages are properly freed and reallocated on each flush
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi-flush");
+
+        let mut cart = Cartridge::create_at(&path, "multi-flush", "Multi Flush Test").unwrap();
+
+        // Create enough files to trigger overflow
+        for i in 0..150 {
+            let filename = format!("f{:04}.dat", i);
+            cart.create_file(&filename, b"x").unwrap();
+        }
+        cart.flush().unwrap();
+        let first_overflow = cart.catalog_overflow_pages.clone();
+        assert!(!first_overflow.is_empty());
+
+        // Add more files and flush again
+        for i in 150..200 {
+            let filename = format!("f{:04}.dat", i);
+            cart.create_file(&filename, b"y").unwrap();
+        }
+        cart.flush().unwrap();
+
+        // Overflow pages may differ (old ones freed, new ones allocated)
+        // But all files should still be accessible
+        drop(cart);
+        let cart2 = Cartridge::open(&path).unwrap();
+        for i in 0..200 {
+            let filename = format!("f{:04}.dat", i);
+            assert!(cart2.exists(&filename).unwrap(), "File {} should exist", filename);
+        }
+    }
+
+    #[test]
+    fn test_multi_page_no_overflow_overlap() {
+        // Regression test: on the second flush, old allocator overflow pages
+        // could overlap with newly allocated catalog overflow pages, causing
+        // the allocator's write to corrupt the catalog data.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlap-test");
+
+        let mut cart = Cartridge::create_at(&path, "overlap", "Overlap Test").unwrap();
+
+        // Create enough files to trigger multi-page catalog overflow
+        for i in 0..200 {
+            let filename = format!("project/data/file-{:04}.dat", i);
+            let content = format!("content-for-file-{}", i);
+            cart.create_file(&filename, content.as_bytes()).unwrap();
+        }
+        cart.flush().unwrap();
+
+        assert!(!cart.catalog_overflow_pages.is_empty(), "Should have catalog overflow");
+
+        // Verify no overlap between catalog and allocator overflow pages
+        let cat_set: std::collections::HashSet<u64> =
+            cart.catalog_overflow_pages.iter().copied().collect();
+        let alloc_set: std::collections::HashSet<u64> =
+            cart.allocator_overflow_pages.iter().copied().collect();
+        let overlap: Vec<u64> = cat_set.intersection(&alloc_set).copied().collect();
+        assert!(overlap.is_empty(), "Overflow pages must not overlap: {:?}", overlap);
+
+        // Close and reopen (this tests the allocator overflow marking on load)
+        drop(cart);
+        let mut cart = Cartridge::open(&path).unwrap();
+
+        // Add more files (grows catalog, requires new overflow allocation)
+        for i in 200..350 {
+            let filename = format!("project/data/file-{:04}.dat", i);
+            let content = format!("new-content-{}", i);
+            cart.create_file(&filename, content.as_bytes()).unwrap();
+        }
+
+        // Second flush — this is where the overlap bug would manifest
+        cart.flush().unwrap();
+
+        // Verify no overlap after second flush
+        let cat_set2: std::collections::HashSet<u64> =
+            cart.catalog_overflow_pages.iter().copied().collect();
+        let alloc_set2: std::collections::HashSet<u64> =
+            cart.allocator_overflow_pages.iter().copied().collect();
+        let overlap2: Vec<u64> = cat_set2.intersection(&alloc_set2).copied().collect();
+        assert!(overlap2.is_empty(), "Overflow pages must not overlap after re-flush: {:?}", overlap2);
+
+        // Close and reopen — verify all data is intact
+        drop(cart);
+        let cart = Cartridge::open(&path).unwrap();
+        let mut missing = Vec::new();
+        for i in 0..350 {
+            let filename = format!("project/data/file-{:04}.dat", i);
+            if !cart.exists(&filename).unwrap() {
+                missing.push(i);
+            }
+        }
+        assert!(missing.is_empty(), "Missing {} files after reopen: {:?}",
+            missing.len(), &missing[..missing.len().min(20)]);
+    }
+
+    #[test]
+    fn test_350_files_single_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big-single");
+
+        let mut cart = Cartridge::create_at(&path, "big", "Big Test").unwrap();
+        for i in 0..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            cart.create_file(&filename, format!("c-{}", i).as_bytes()).unwrap();
+        }
+
+        // Verify catalog has all entries before flush
+        let mut pre_missing = Vec::new();
+        for i in 0..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            if !cart.exists(&filename).unwrap() {
+                pre_missing.push(i);
+            }
+        }
+        if !pre_missing.is_empty() {
+            // BTree has a bug losing entries
+            panic!("Pre-flush: missing {} files: {:?}",
+                pre_missing.len(), &pre_missing[..pre_missing.len().min(30)]);
+        }
+
+        // Check catalog bincode size
+        let catalog_data = cart.catalog.to_bytes().unwrap();
+        eprintln!("Catalog bincode size: {} bytes", catalog_data.len());
+
+        cart.flush().unwrap();
+
+        // After flush, check catalog overflow
+        eprintln!("Catalog overflow pages: {:?}", cart.catalog_overflow_pages);
+        eprintln!("Allocator overflow pages: {:?}", cart.allocator_overflow_pages);
+
+        // Verify still accessible before reopen
+        for i in 0..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            assert!(cart.exists(&filename).unwrap(), "Post-flush: missing {}", filename);
+        }
+
+        drop(cart);
+        let cart = Cartridge::open(&path).unwrap();
+        let mut missing = Vec::new();
+        for i in 0..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            if !cart.exists(&filename).unwrap() {
+                missing.push(i);
+            }
+        }
+        assert!(missing.is_empty(), "Missing {} files after reopen: {:?}",
+            missing.len(), &missing[..missing.len().min(20)]);
+    }
+
+    #[test]
+    fn test_multi_page_with_delete_and_reopen() {
+        // Test that delete+create+flush+reopen preserves all data
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delete-reopen-test");
+
+        let mut cart = Cartridge::create_at(&path, "delreopen", "Delete Reopen Test").unwrap();
+
+        for i in 0..200 {
+            let filename = format!("d/f-{:04}.dat", i);
+            cart.create_file(&filename, format!("c-{}", i).as_bytes()).unwrap();
+        }
+        cart.flush().unwrap();
+
+        drop(cart);
+        let mut cart = Cartridge::open(&path).unwrap();
+
+        // Delete some, create others
+        for i in 0..50 {
+            let filename = format!("d/f-{:04}.dat", i);
+            cart.delete_file(&filename).unwrap();
+        }
+        for i in 200..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            cart.create_file(&filename, format!("n-{}", i).as_bytes()).unwrap();
+        }
+        cart.flush().unwrap();
+
+        drop(cart);
+        let cart = Cartridge::open(&path).unwrap();
+        let mut missing = Vec::new();
+        for i in 50..350 {
+            let filename = format!("d/f-{:04}.dat", i);
+            if !cart.exists(&filename).unwrap() {
+                missing.push(i);
+            }
+        }
+        assert!(missing.is_empty(), "Missing {} files: {:?}",
+            missing.len(), &missing[..missing.len().min(20)]);
     }
 }
 
