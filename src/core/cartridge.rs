@@ -175,6 +175,9 @@ impl Cartridge {
         // Write manifest to .cartridge/manifest.json
         cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
 
+        // Flush to persist catalog + allocator state to disk
+        cartridge.flush()?;
+
         Ok(cartridge)
     }
 
@@ -245,6 +248,12 @@ impl Cartridge {
 
         // Write manifest to .cartridge/manifest.json
         cartridge.create_file(MANIFEST_PATH, &manifest_json)?;
+
+        // Flush to disk so the catalog and allocator state (including reserved
+        // page tracking) are persisted. Without this, reopening the cartridge
+        // would find empty catalog/allocator pages and lose the reserved block
+        // allocations, causing data corruption.
+        cartridge.flush()?;
 
         Ok(cartridge)
     }
