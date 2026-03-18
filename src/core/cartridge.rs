@@ -1151,6 +1151,34 @@ impl Cartridge {
         }
     }
 
+    /// Copy all live files to a new cartridge at `dest`, producing a compact
+    /// copy with no free (unallocated) blocks.
+    ///
+    /// The original cartridge is left unchanged. After this call the caller
+    /// can atomically replace the original file with `dest` to reclaim space.
+    pub fn vacuum_into(&self, dest: &Path) -> Result<()> {
+        if dest.exists() {
+            std::fs::remove_file(dest)?;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut new_cart = Cartridge::create_at(dest, "vacuum", "vacuum")?;
+
+        for path in self.list_dir("")? {
+            let data = self.read_file(&path)?;
+            if new_cart.exists(&path)? {
+                new_cart.write_file(&path, &data)?;
+            } else {
+                new_cart.create_file(&path, &data)?;
+            }
+        }
+
+        new_cart.flush()?;
+        Ok(())
+    }
+
     /// Read container manifest
     ///
     /// Returns an error if the manifest doesn't exist or is invalid.
