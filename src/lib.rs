@@ -928,6 +928,25 @@ impl CartridgeDatabase {
         }
         Ok(())
     }
+
+    /// Check if this cartridge has enough wasted space to justify vacuum.
+    pub fn needs_vacuum(&self) -> bool {
+        self.inner.lock().needs_vacuum()
+    }
+
+    /// Run one incremental vacuum step, relocating up to `batch_size` pages.
+    ///
+    /// Returns progress. Call repeatedly until `done`, then call `vacuum_finish()`.
+    pub fn vacuum_step(&self, batch_size: usize) -> Result<crate::core::cartridge::VacuumProgress> {
+        self.inner.lock().vacuum_step(batch_size)
+    }
+
+    /// Finish vacuum — shrink allocator and truncate the backing file.
+    ///
+    /// Returns bytes reclaimed.
+    pub fn vacuum_finish(&self) -> Result<u64> {
+        self.inner.lock().vacuum_finish()
+    }
 }
 
 impl Drop for CartridgeDatabase {
