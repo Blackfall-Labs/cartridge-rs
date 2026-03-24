@@ -398,6 +398,18 @@ impl Cartridge {
         dirty_pages.clear();
         file.sync()?;
 
+        // Post-flush assertion: detect dud cart (empty catalog in a non-empty file)
+        let entry_count = self.catalog.len();
+        let total = self.header.total_blocks;
+        if entry_count == 0 && total > MIN_BLOCKS as u64 {
+            tracing::error!(
+                "CRITICAL: flush produced empty catalog with {} total blocks ({} bytes). \
+                 This cartridge may be a dud.",
+                total,
+                total * PAGE_SIZE as u64,
+            );
+        }
+
         Ok(())
     }
 
@@ -1406,6 +1418,62 @@ impl Cartridge {
     const WAL_DIR: &'static str = "wal";
     /// Subdirectory for vacuum WAL.
     const VACUUM_WAL_DIR: &'static str = "wal/vacuum";
+
+    /// Run a health check on this cartridge. Returns warnings for suspicious state.
+    ///
+    /// Checks:
+    /// - Empty catalog in a non-trivial file (dud detection)
+    /// - High dead page ratio (>25%)
+    /// - Oversized file relative to content (<10 entries but >50MB)
+    /// - Bitmap/allocator counter drift
+    ///
+    /// Returns a list of warning messages. Empty list = healthy.
+    pub fn health_check(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let total = self.header.total_blocks;
+        let free = self.header.free_blocks;
+        let entries = self.catalog.len();
+        let file_bytes = total * PAGE_SIZE as u64;
+
+        // Dud detection: empty catalog in a non-empty file
+        if entries == 0 && total > MIN_BLOCKS as u64 {
+            warnings.push(format!(
+                "Empty catalog with {} blocks ({} bytes) — possible dud",
+                total, file_bytes,
+            ));
+        }
+
+        // Oversized with few entries
+        if entries < 10 && file_bytes > 50 * 1024 * 1024 {
+            warnings.push(format!(
+                "Only {} catalog entries but {} MB on disk — likely needs vacuum",
+                entries, file_bytes / (1024 * 1024),
+            ));
+        }
+
+        // High waste ratio
+        if total > MIN_BLOCKS as u64 {
+            let waste_ratio = free as f64 / total as f64;
+            if waste_ratio > 0.25 {
+                warnings.push(format!(
+                    "{:.0}% free space ({} of {} blocks) — consider vacuum",
+                    waste_ratio * 100.0, free, total,
+                ));
+            }
+        }
+
+        // Bitmap counter drift: recalibrate and compare
+        let bitmap_free = self.allocator.count_free();
+        let header_free = self.header.free_blocks as usize;
+        if bitmap_free != header_free {
+            warnings.push(format!(
+                "Allocator drift: bitmap says {} free, header says {} — recalibrate needed",
+                bitmap_free, header_free,
+            ));
+        }
+
+        warnings
+    }
 
     /// Check whether this cartridge has enough wasted space to justify vacuum.
     ///

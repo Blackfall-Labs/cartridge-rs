@@ -947,6 +947,11 @@ impl CartridgeDatabase {
     pub fn vacuum_finish(&self) -> Result<u64> {
         self.inner.lock().vacuum_finish()
     }
+
+    /// Run a health check. Returns warning messages (empty = healthy).
+    pub fn health_check(&self) -> Vec<String> {
+        self.inner.lock().health_check()
+    }
 }
 
 impl Drop for CartridgeDatabase {

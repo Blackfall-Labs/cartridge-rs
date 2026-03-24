@@ -134,6 +134,13 @@ impl HybridAllocator {
         self.bitmap.is_allocated(block_id)
     }
 
+    /// Count actual free blocks by scanning the bitmap (ground truth).
+    ///
+    /// Use this to detect drift between the cached counter and reality.
+    pub fn count_free(&self) -> usize {
+        self.bitmap.count_free()
+    }
+
     /// Shrink allocator capacity to fewer blocks.
     ///
     /// All blocks at or above `new_total_blocks` must already be free.
