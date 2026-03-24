@@ -106,12 +106,52 @@ impl HybridAllocator {
         Ok(())
     }
 
+    /// Recalibrate all internal free-block counters from the actual bitmap state.
+    ///
+    /// The bitmap is the ground truth — every allocation (small or large) marks
+    /// the bitmap. This method recomputes all three `free_blocks` counters
+    /// (bitmap, extent, and the canonical hybrid counter) so they agree with
+    /// what the bitmap actually shows.
+    ///
+    /// Call this after deserialization to repair any stale counters.
+    pub fn recalibrate(&mut self) {
+        self.bitmap.recalibrate();
+        self.extent.recalibrate();
+        // The bitmap is authoritative — it tracks ALL allocations.
+        self.free_blocks = self.bitmap.free_blocks();
+    }
+
     /// Mark specific pages as allocated in both sub-allocators, adjusting all
     /// internal counters.
     ///
     /// Used after loading the allocator from disk to account for the allocator's
     /// own overflow pages (which were allocated after the allocator was serialized
     /// and therefore aren't reflected in the deserialized state).
+    /// Check if a specific block is allocated.
+    ///
+    /// Delegates to the bitmap allocator (authoritative source).
+    pub fn is_allocated(&self, block_id: u64) -> bool {
+        self.bitmap.is_allocated(block_id)
+    }
+
+    /// Shrink allocator capacity to fewer blocks.
+    ///
+    /// All blocks at or above `new_total_blocks` must already be free.
+    /// Delegates to both sub-allocators and updates counters.
+    pub fn shrink_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks >= self.total_blocks {
+            return Ok(());
+        }
+
+        self.bitmap.shrink_capacity(new_total_blocks)?;
+        self.extent.shrink_capacity(new_total_blocks)?;
+
+        self.total_blocks = new_total_blocks;
+        self.free_blocks = self.bitmap.free_blocks();
+
+        Ok(())
+    }
+
     pub fn mark_pages_allocated(&mut self, pages: &[u64]) -> Result<()> {
         self.bitmap.mark_allocated_with_count(pages)?;
         self.extent.mark_allocated(pages)?;

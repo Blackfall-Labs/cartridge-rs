@@ -125,6 +125,7 @@ pub mod page;
 pub mod snapshot;
 pub mod validation;
 pub mod vfs;
+pub mod wal;
 
 // Internal modules (private - implementation details)
 pub(crate) mod buffer_pool;
@@ -136,7 +137,7 @@ mod integration_tests;
 pub use allocator::{
     bitmap::BitmapAllocator, extent::ExtentAllocator, hybrid::HybridAllocator, BlockAllocator,
 };
-pub use cartridge::{Cartridge, CartridgeStats};
+pub use cartridge::{Cartridge, CartridgeStats, VacuumProgress};
 pub use catalog::{Catalog, FileMetadata, FileType};
 pub use engram_integration::EngramFreezer;
 pub use error::{CartridgeError, Result};
@@ -148,6 +149,7 @@ pub use iam::{
 pub use io::CartridgeFile;
 pub use page::{Page, PageHeader, PageType};
 pub use snapshot::{SnapshotManager, SnapshotMetadata};
+pub use wal::{WalEntry, WalFile, WalOp, WalState, WalWrite};
 
 /// Cartridge format version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

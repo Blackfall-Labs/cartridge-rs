@@ -130,6 +130,34 @@ impl CartridgeFile {
         self.file.set_len(new_size as u64)?;
         Ok(())
     }
+
+    /// Shrink file to new block count (truncate).
+    ///
+    /// Used by vacuum to reclaim disk space after compaction.
+    pub fn shrink(&mut self, new_total_blocks: usize) -> Result<()> {
+        let new_size = new_total_blocks * PAGE_SIZE;
+        self.file.set_len(new_size as u64)?;
+        Ok(())
+    }
+
+    /// Write a partial page — bytes at an arbitrary offset within a page.
+    ///
+    /// Used by the WAL to overwrite individual entries without rewriting
+    /// the full 4KB page. The caller is responsible for fsyncing afterward.
+    pub fn write_at(&mut self, page_id: u64, offset_in_page: usize, data: &[u8]) -> Result<()> {
+        if offset_in_page + data.len() > PAGE_SIZE {
+            return Err(CartridgeError::Allocation(format!(
+                "write_at: offset {} + len {} exceeds page size {}",
+                offset_in_page,
+                data.len(),
+                PAGE_SIZE
+            )));
+        }
+        let file_offset = page_id * PAGE_SIZE as u64 + offset_in_page as u64;
+        self.file.seek(SeekFrom::Start(file_offset))?;
+        self.file.write_all(data)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

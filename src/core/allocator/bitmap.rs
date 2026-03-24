@@ -182,6 +182,36 @@ impl BitmapAllocator {
         Ok(())
     }
 
+    /// Count the actual number of free blocks by scanning the bitmap.
+    ///
+    /// This is the ground truth — it counts zero-bits up to `total_blocks`.
+    /// Use this to recalibrate the `free_blocks` counter after deserialization.
+    pub fn count_free(&self) -> usize {
+        let full_words = self.total_blocks / 64;
+        let remainder = self.total_blocks % 64;
+
+        let mut free = 0usize;
+        for &word in &self.bitmap[..full_words] {
+            free += word.count_zeros() as usize;
+        }
+        if remainder > 0 {
+            if let Some(&word) = self.bitmap.get(full_words) {
+                // Only count bits within total_blocks
+                for bit in 0..remainder {
+                    if (word & (1u64 << bit)) == 0 {
+                        free += 1;
+                    }
+                }
+            }
+        }
+        free
+    }
+
+    /// Recalibrate the internal `free_blocks` counter from the actual bitmap state.
+    pub fn recalibrate(&mut self) {
+        self.free_blocks = self.count_free();
+    }
+
     /// Extend bitmap capacity to track more blocks
     ///
     /// Used by auto-growth to expand the allocator's capacity.
@@ -191,7 +221,6 @@ impl BitmapAllocator {
         }
 
         let new_num_words = (new_total_blocks + 63) / 64;
-        let old_num_words = self.bitmap.len();
 
         // Extend bitmap with zeros (representing free blocks)
         self.bitmap.resize(new_num_words, 0u64);
@@ -199,6 +228,45 @@ impl BitmapAllocator {
         let added_blocks = new_total_blocks - self.total_blocks;
         self.total_blocks = new_total_blocks;
         self.free_blocks += added_blocks;
+
+        Ok(())
+    }
+
+    /// Shrink bitmap capacity to fewer blocks.
+    ///
+    /// All blocks at or above `new_total_blocks` must already be free.
+    /// Truncates the bitmap and updates counters.
+    pub fn shrink_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks >= self.total_blocks {
+            return Ok(()); // No shrink needed
+        }
+
+        // Verify no allocated blocks exist in the region being removed
+        for block_id in new_total_blocks..self.total_blocks {
+            if self.is_allocated(block_id as u64) {
+                return Err(CartridgeError::Allocation(format!(
+                    "Cannot shrink: block {} is still allocated",
+                    block_id
+                )));
+            }
+        }
+
+        // Truncate bitmap
+        let new_num_words = (new_total_blocks + 63) / 64;
+        self.bitmap.truncate(new_num_words);
+
+        // Clear any bits beyond new_total_blocks in the last word
+        let remainder = new_total_blocks % 64;
+        if remainder > 0 {
+            if let Some(last_word) = self.bitmap.last_mut() {
+                // Zero out bits at position >= remainder
+                let mask = (1u64 << remainder) - 1;
+                *last_word &= mask;
+            }
+        }
+
+        self.total_blocks = new_total_blocks;
+        self.recalibrate();
 
         Ok(())
     }

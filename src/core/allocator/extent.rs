@@ -328,6 +328,16 @@ impl ExtentAllocator {
         self.free_extents.insert(coalesced.start, coalesced);
     }
 
+    /// Count the actual number of free blocks from the free_extents map.
+    pub fn count_free(&self) -> usize {
+        self.free_extents.values().map(|e| e.length as usize).sum()
+    }
+
+    /// Recalibrate the internal `free_blocks` counter from the free_extents map.
+    pub fn recalibrate(&mut self) {
+        self.free_blocks = self.count_free();
+    }
+
     /// Extend extent allocator capacity to track more blocks
     ///
     /// Used by auto-growth to expand the allocator's capacity.
@@ -360,6 +370,71 @@ impl ExtentAllocator {
 
         self.total_blocks = new_total_blocks;
         self.free_blocks += added_blocks;
+
+        Ok(())
+    }
+
+    /// Shrink extent allocator capacity to fewer blocks.
+    ///
+    /// All blocks at or above `new_total_blocks` must already be free.
+    /// Removes or truncates extents that reference the removed region.
+    pub fn shrink_capacity(&mut self, new_total_blocks: usize) -> Result<()> {
+        if new_total_blocks >= self.total_blocks {
+            return Ok(()); // No shrink needed
+        }
+
+        let boundary = new_total_blocks as u64;
+
+        // Verify no allocated blocks exist above the boundary.
+        // A block is allocated if it's NOT in any free extent.
+        // Collect all free blocks in the removed region.
+        let mut free_above = 0u64;
+        for extent in self.free_extents.values() {
+            if extent.start >= boundary {
+                free_above += extent.length;
+            } else if extent.start + extent.length > boundary {
+                free_above += (extent.start + extent.length) - boundary;
+            }
+        }
+        let total_above = (self.total_blocks as u64) - boundary;
+        if free_above != total_above {
+            return Err(CartridgeError::Allocation(format!(
+                "Cannot shrink: {} allocated blocks above boundary {}",
+                total_above - free_above,
+                new_total_blocks
+            )));
+        }
+
+        // Remove extents entirely above boundary
+        let above_keys: Vec<u64> = self.free_extents.keys()
+            .copied()
+            .filter(|&start| start >= boundary)
+            .collect();
+        for key in above_keys {
+            self.free_extents.remove(&key);
+        }
+
+        // Truncate extents that span the boundary
+        let spanning_keys: Vec<u64> = self.free_extents.keys()
+            .copied()
+            .filter(|&start| {
+                if let Some(ext) = self.free_extents.get(&start) {
+                    start < boundary && start + ext.length > boundary
+                } else {
+                    false
+                }
+            })
+            .collect();
+        for key in spanning_keys {
+            if let Some(ext) = self.free_extents.get(&key) {
+                let new_length = boundary - ext.start;
+                let truncated = Extent::new(ext.start, new_length);
+                self.free_extents.insert(key, truncated);
+            }
+        }
+
+        self.total_blocks = new_total_blocks;
+        self.recalibrate();
 
         Ok(())
     }

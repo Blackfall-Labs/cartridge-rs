@@ -267,7 +267,7 @@ impl Cartridge {
         let normalized_path = validation::normalize_container_path(path.as_ref())?;
 
         let mut file = CartridgeFile::open(normalized_path)?;
-        let header = file.read_header()?;
+        let mut header = file.read_header()?;
 
         // Load allocator first (catalog overflow pages are tracked in the allocator)
         let (mut allocator, allocator_overflow_pages) =
@@ -279,6 +279,16 @@ impl Cartridge {
         if !allocator_overflow_pages.is_empty() {
             allocator.mark_pages_allocated(&allocator_overflow_pages)?;
         }
+
+        // Recalibrate all internal free-block counters from the actual bitmap.
+        // The canonical `free_blocks` counter can become stale across
+        // serialize/deserialize cycles; recalibrating from the bitmap (which is
+        // the authoritative record of every allocation) eliminates the
+        // desynchronization that causes spurious OutOfSpace errors.
+        allocator.recalibrate();
+
+        // Sync header free_blocks from recalibrated allocator.
+        header.free_blocks = allocator.free_blocks() as u64;
 
         // Load catalog (may span multiple pages)
         let (catalog, catalog_overflow_pages) =
@@ -307,6 +317,14 @@ impl Cartridge {
             if !exists {
                 tracing::warn!("Container opened without manifest (legacy container)");
             }
+        }
+
+        // Recover from any interrupted vacuum operations
+        let mut cartridge = cartridge;
+        match cartridge.recover_vacuum_wal() {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("Recovered {n} interrupted vacuum operations on open"),
+            Err(e) => tracing::warn!("WAL recovery failed (non-fatal): {e}"),
         }
 
         Ok(cartridge)
@@ -1143,11 +1161,21 @@ impl Cartridge {
 
     /// Get archive statistics
     pub fn stats(&self) -> CartridgeStats {
+        let (path, file_size_bytes) = if let Some(file) = &self.file {
+            let f = file.lock();
+            let p = f.path().to_path_buf();
+            let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            (Some(p), size)
+        } else {
+            (None, 0)
+        };
         CartridgeStats {
             total_blocks: self.header.total_blocks,
             free_blocks: self.header.free_blocks,
             used_blocks: self.header.total_blocks - self.header.free_blocks,
             fragmentation: self.allocator.fragmentation_score(),
+            path,
+            file_size_bytes,
         }
     }
 
@@ -1167,6 +1195,10 @@ impl Cartridge {
         let mut new_cart = Cartridge::create_at(dest, "vacuum", "vacuum")?;
 
         for path in self.list_dir("")? {
+            // Skip internal container entries — new_cart creates its own manifest.
+            if path == ".cartridge" || path.starts_with(".cartridge/") {
+                continue;
+            }
             let data = self.read_file(&path)?;
             if new_cart.exists(&path)? {
                 new_cart.write_file(&path, &data)?;
@@ -1363,6 +1395,507 @@ impl Cartridge {
 
         Ok(content)
     }
+
+    // =====================================================================
+    // WAL + Incremental Vacuum
+    // =====================================================================
+
+    /// Path of the vacuum WAL file inside the VFS.
+    const VACUUM_WAL_PATH: &'static str = "wal/vacuum/wal.log";
+    /// Directory containing WAL files.
+    const WAL_DIR: &'static str = "wal";
+    /// Subdirectory for vacuum WAL.
+    const VACUUM_WAL_DIR: &'static str = "wal/vacuum";
+
+    /// Check whether this cartridge has enough wasted space to justify vacuum.
+    ///
+    /// Returns `true` if more than 50% of pages are dead OR more than 10 MB
+    /// of dead space exists.
+    pub fn needs_vacuum(&self) -> bool {
+        let total = self.header.total_blocks;
+        let free = self.header.free_blocks;
+        if total <= MIN_BLOCKS as u64 {
+            return false;
+        }
+
+        // Free blocks are reclaimable by truncation.
+        let waste = free;
+        let waste_bytes = waste * PAGE_SIZE as u64;
+        let waste_ratio = waste as f64 / total as f64;
+
+        waste_ratio > 0.5 || waste_bytes > 10 * 1024 * 1024
+    }
+
+    /// Ensure the vacuum WAL file exists in the VFS with pre-allocated pages.
+    ///
+    /// If the file already exists, loads and returns it.
+    /// If it doesn't, creates it with `DEFAULT_WAL_PAGES` pages.
+    fn ensure_vacuum_wal(&mut self) -> Result<crate::wal::WalFile> {
+        use crate::wal;
+
+        if self.exists(Self::VACUUM_WAL_PATH)? {
+            // Load existing WAL
+            let meta = self.metadata(Self::VACUUM_WAL_PATH)?;
+            let mut page_data = Vec::new();
+            for &page_id in &meta.blocks {
+                let data = self.read_page_data_raw(page_id)?;
+                page_data.push((page_id, data));
+            }
+            return wal::WalFile::load(page_data);
+        }
+
+        // Create WAL directory structure
+        if !self.exists(Self::WAL_DIR)? {
+            self.create_dir(Self::WAL_DIR)?;
+        }
+        if !self.exists(Self::VACUUM_WAL_DIR)? {
+            self.create_dir(Self::VACUUM_WAL_DIR)?;
+        }
+
+        // Pre-allocate pages for the WAL file
+        let wal_size = wal::DEFAULT_WAL_PAGES * PAGE_SIZE;
+        let zero_content = vec![0u8; wal_size];
+        self.create_file(Self::VACUUM_WAL_PATH, &zero_content)?;
+
+        // Read back the allocated page IDs
+        let meta = self.metadata(Self::VACUUM_WAL_PATH)?;
+        let wal = wal::WalFile::new(meta.blocks)?;
+
+        // Write initial header
+        let header_write = wal.header_write();
+        self.apply_wal_write(&header_write)?;
+
+        Ok(wal)
+    }
+
+    /// Apply a WAL write descriptor to both the backing file and the page cache.
+    ///
+    /// WAL writes are partial-page overwrites. We must update the page cache
+    /// so that a subsequent `flush()` doesn't overwrite our WAL data with
+    /// stale cached page content.
+    fn apply_wal_write(&self, write: &crate::wal::WalWrite) -> Result<()> {
+        // Update page cache — ensures flush() won't clobber WAL data
+        {
+            let mut pages = self.pages.lock();
+            let mut dirty = self.dirty_pages.lock();
+            let page = pages.entry(write.page_id).or_insert_with(|| {
+                if let Some(file) = &self.file {
+                    file.lock().read_page_data(write.page_id).unwrap_or_else(|_| vec![0u8; PAGE_SIZE])
+                } else {
+                    vec![0u8; PAGE_SIZE]
+                }
+            });
+            let end = write.offset_in_page + write.data.len();
+            page[write.offset_in_page..end].copy_from_slice(&write.data);
+            dirty.insert(write.page_id);
+        }
+
+        // Also write directly to disk for immediate durability
+        if let Some(file) = &self.file {
+            file.lock().write_at(write.page_id, write.offset_in_page, &write.data)?;
+        }
+        Ok(())
+    }
+
+    /// Fsync the backing file.
+    fn sync_file(&self) -> Result<()> {
+        if let Some(file) = &self.file {
+            file.lock().sync()?;
+        }
+        Ok(())
+    }
+
+    /// Read raw page data (bypass page cache, direct from disk or cache).
+    fn read_page_data_raw(&self, page_id: u64) -> Result<Vec<u8>> {
+        let pages = self.pages.lock();
+        if let Some(data) = pages.get(&page_id) {
+            return Ok(data.clone());
+        }
+        drop(pages);
+
+        if let Some(file) = &self.file {
+            return file.lock().read_page_data(page_id);
+        }
+
+        Err(CartridgeError::Allocation(format!(
+            "Page {} not found and no disk backing",
+            page_id
+        )))
+    }
+
+    /// Build a reverse map: page_id → (catalog_path, index_in_blocks_vec).
+    ///
+    /// This tells us which catalog entry owns each content page so we can
+    /// update the `blocks` vec after relocating.
+    fn build_page_owner_map(&self) -> Result<std::collections::HashMap<u64, (String, usize)>> {
+        let mut map = std::collections::HashMap::new();
+
+        for (path, meta) in self.catalog.list_prefix("")? {
+            // Skip WAL files — they must never be relocated
+            if path.starts_with(crate::wal::WAL_PREFIX) {
+                continue;
+            }
+            for (idx, &page_id) in meta.blocks.iter().enumerate() {
+                map.insert(page_id, (path.clone(), idx));
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Run one incremental vacuum step, relocating up to `batch_size` pages.
+    ///
+    /// Returns progress information. Call repeatedly until `done` is true,
+    /// then call `vacuum_finish()` to truncate the file.
+    ///
+    /// Each page relocation is WAL-journaled. Crash at any point is safe.
+    pub fn vacuum_step(&mut self, batch_size: usize) -> Result<VacuumProgress> {
+        use crate::wal::{WalOp, WalState, fnv1a_hash};
+
+        if self.file.is_none() {
+            return Ok(VacuumProgress {
+                pages_relocated: 0,
+                pages_remaining: 0,
+                bytes_reclaimable: 0,
+                done: true,
+            });
+        }
+
+        let mut wal = self.ensure_vacuum_wal()?;
+
+        // Build the live page set and owner map
+        let owner_map = self.build_page_owner_map()?;
+
+        // Collect all live page IDs (content + infrastructure).
+        // Infrastructure pages that must not move: 0 (header), 1 (catalog root), 2 (allocator root)
+        // Overflow pages and WAL pages are live but also shouldn't be relocated.
+        let mut live_pages: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        live_pages.insert(0);
+        live_pages.insert(1);
+        live_pages.insert(2);
+        for &p in &self.catalog_overflow_pages {
+            live_pages.insert(p);
+        }
+        for &p in &self.allocator_overflow_pages {
+            live_pages.insert(p);
+        }
+        // WAL pages
+        for &p in wal.page_ids() {
+            live_pages.insert(p);
+        }
+        // Content pages (everything tracked by catalog, including WAL files in VFS)
+        for (_, meta) in self.catalog.list_prefix("")? {
+            for &p in &meta.blocks {
+                live_pages.insert(p);
+            }
+        }
+
+        // Find the compact boundary: the smallest total_blocks where all live
+        // pages fit. That's max(live_page_id) + 1.
+        let high_water = live_pages.iter().copied().max().unwrap_or(2) + 1;
+        let current_total = self.header.total_blocks;
+
+        if high_water >= current_total {
+            // Nothing to reclaim — all pages are packed
+            let writes = wal.clear();
+            for w in &writes {
+                self.apply_wal_write(w)?;
+            }
+            self.sync_file()?;
+            return Ok(VacuumProgress {
+                pages_relocated: 0,
+                pages_remaining: 0,
+                bytes_reclaimable: 0,
+                done: true,
+            });
+        }
+
+        // Find pages that need to relocate: live content pages above the
+        // target boundary. We want to pack everything below high_water,
+        // but first we need free slots below high_water to move things into.
+        //
+        // Strategy: find the highest live content pages and move them into
+        // the lowest free slots.
+
+        // Relocatable pages: live content pages (not infrastructure, not WAL)
+        let mut relocatable: Vec<u64> = owner_map.keys()
+            .copied()
+            .collect();
+        relocatable.sort_unstable();
+        relocatable.reverse(); // highest first
+
+        // Free slots below current high_water, lowest first
+        let mut free_slots: Vec<u64> = Vec::new();
+        for page_id in 3..high_water {
+            if !live_pages.contains(&page_id) {
+                free_slots.push(page_id);
+            }
+        }
+        // We only need to relocate pages that are above all free slots.
+        // The goal: move high pages into low free slots.
+
+        // Find pages that ARE above the minimum viable boundary.
+        // The minimum viable boundary = total live pages (they could all fit
+        // in pages 0..live_count if perfectly packed).
+        let min_boundary = live_pages.len() as u64;
+
+        // Pages to relocate: high live pages that are above where they'd be
+        // in a compacted layout, paired with free slots below them.
+        let mut moves_planned = 0usize;
+        let mut free_idx = 0;
+
+        for &high_page in &relocatable {
+            if moves_planned >= batch_size {
+                break;
+            }
+            // Only relocate if this page is above the minimum boundary
+            // AND there's a free slot below it
+            if high_page < min_boundary {
+                continue;
+            }
+            // Find a free slot below this page
+            while free_idx < free_slots.len() && free_slots[free_idx] >= high_page {
+                free_idx += 1;
+            }
+            if free_idx >= free_slots.len() {
+                break; // No more free slots below
+            }
+            // Skip if the free slot isn't actually lower
+            if free_slots[free_idx] >= high_page {
+                continue;
+            }
+
+            let dest = free_slots[free_idx];
+            free_idx += 1;
+
+            let (ref path, block_index) = owner_map[&high_page];
+            let path_hash = fnv1a_hash(path);
+
+            // 1. Write WAL intent
+            let (entry, intent_write) = wal.append(
+                WalOp::VacuumRelocate,
+                WalState::Intent,
+                high_page,
+                dest,
+                path_hash,
+                block_index as u32,
+            )?;
+            self.apply_wal_write(&intent_write)?;
+            let hdr_write = wal.header_write();
+            self.apply_wal_write(&hdr_write)?;
+            self.sync_file()?;
+
+            // 2. Copy page content
+            let page_content = self.read_page_data_raw(high_page)?;
+            {
+                let mut pages = self.pages.lock();
+                let mut dirty = self.dirty_pages.lock();
+                pages.insert(dest, page_content);
+                dirty.insert(dest);
+                // Write dest page to disk immediately
+            }
+            if let Some(file) = &self.file {
+                let pages = self.pages.lock();
+                if let Some(data) = pages.get(&dest) {
+                    file.lock().write_page_data(dest, data)?;
+                }
+            }
+
+            // Update WAL: written
+            let written_write = wal.update_state(entry.sequence, WalState::Written)?;
+            self.apply_wal_write(&written_write)?;
+            self.sync_file()?;
+
+            // 3. Update catalog: point file's block from high_page to dest
+            if let Some(mut meta) = self.catalog.get(path)? {
+                meta.blocks[block_index] = dest;
+                self.catalog.insert(path, meta)?;
+            }
+
+            // Free the old page in the allocator
+            self.allocator.free(&[high_page])?;
+            self.header.free_blocks = self.allocator.free_blocks() as u64;
+
+            // Remove old page from cache
+            {
+                let mut pages = self.pages.lock();
+                pages.remove(&high_page);
+            }
+
+            // Update WAL: committed
+            let committed_write = wal.update_state(entry.sequence, WalState::Committed)?;
+            self.apply_wal_write(&committed_write)?;
+            self.sync_file()?;
+
+            moves_planned += 1;
+        }
+
+        // Calculate remaining work
+        let remaining = relocatable.iter()
+            .filter(|&&p| p >= min_boundary)
+            .count()
+            .saturating_sub(moves_planned);
+
+        let reclaimable = (current_total - min_boundary) * PAGE_SIZE as u64;
+
+        // If no more work to do, clear the WAL
+        let done = remaining == 0 && moves_planned == 0;
+        if done || remaining == 0 {
+            let writes = wal.clear();
+            for w in &writes {
+                self.apply_wal_write(w)?;
+            }
+            self.sync_file()?;
+        }
+
+        Ok(VacuumProgress {
+            pages_relocated: moves_planned,
+            pages_remaining: remaining,
+            bytes_reclaimable: reclaimable,
+            done: remaining == 0,
+        })
+    }
+
+    /// Finish vacuum: truncate the file to reclaim disk space.
+    ///
+    /// Call this after `vacuum_step()` returns `done: true`.
+    /// Shrinks the allocator, truncates the backing file, and flushes.
+    pub fn vacuum_finish(&mut self) -> Result<u64> {
+        // Recompute the high water mark
+        let mut max_live: u64 = 2; // minimum: pages 0, 1, 2
+        for &p in &self.catalog_overflow_pages {
+            max_live = max_live.max(p);
+        }
+        for &p in &self.allocator_overflow_pages {
+            max_live = max_live.max(p);
+        }
+        for (_, meta) in self.catalog.list_prefix("")? {
+            for &p in &meta.blocks {
+                max_live = max_live.max(p);
+            }
+        }
+
+        let new_total = (max_live + 1) as usize;
+        let old_total = self.header.total_blocks as usize;
+
+        if new_total >= old_total {
+            return Ok(0); // Nothing to truncate
+        }
+
+        let bytes_freed = ((old_total - new_total) * PAGE_SIZE) as u64;
+
+        tracing::info!(
+            "Vacuum truncate: {} -> {} blocks ({} bytes reclaimed)",
+            old_total,
+            new_total,
+            bytes_freed
+        );
+
+        // Shrink allocator
+        self.allocator.shrink_capacity(new_total)?;
+        self.header.total_blocks = new_total as u64;
+        self.header.free_blocks = self.allocator.free_blocks() as u64;
+
+        // Flush catalog + allocator + header to their (now lower) pages
+        self.flush()?;
+
+        // Truncate the backing file
+        if let Some(file) = &self.file {
+            file.lock().shrink(new_total)?;
+        }
+
+        Ok(bytes_freed)
+    }
+
+    /// Recover from a crashed vacuum by replaying or discarding WAL entries.
+    ///
+    /// Called automatically by `open()` if a dirty WAL is found.
+    pub fn recover_vacuum_wal(&mut self) -> Result<usize> {
+        use crate::wal::WalState;
+
+        if !self.exists(Self::VACUUM_WAL_PATH)? {
+            return Ok(0);
+        }
+
+        let meta = self.metadata(Self::VACUUM_WAL_PATH)?;
+        let mut page_data = Vec::new();
+        for &page_id in &meta.blocks {
+            let data = self.read_page_data_raw(page_id)?;
+            page_data.push((page_id, data));
+        }
+
+        let mut wal = crate::wal::WalFile::load(page_data)?;
+        if !wal.is_dirty() {
+            return Ok(0);
+        }
+
+        let pending: Vec<crate::wal::WalEntry> = wal.pending_entries()
+            .into_iter()
+            .copied()
+            .collect();
+        let mut recovered = 0;
+
+        for entry in &pending {
+            match entry.state {
+                WalState::Intent => {
+                    // Nothing happened. Discard.
+                    tracing::info!(
+                        "WAL recovery: discarding intent seq={} (page {} → {})",
+                        entry.sequence, entry.source_page, entry.dest_page
+                    );
+                }
+                WalState::Written => {
+                    // Data was copied to dest but catalog not updated.
+                    // Check if source is still the canonical location (catalog).
+                    // If so, the move didn't complete — just discard dest.
+                    // The source page is still valid.
+                    tracing::info!(
+                        "WAL recovery: discarding incomplete move seq={} (page {} → {}), source intact",
+                        entry.sequence, entry.source_page, entry.dest_page
+                    );
+                    // Free the dest page if it was allocated
+                    if self.allocator.is_allocated(entry.dest_page) {
+                        // Only free if it's not used by something else
+                        let owner_map = self.build_page_owner_map()?;
+                        if !owner_map.contains_key(&entry.dest_page) {
+                            self.allocator.free(&[entry.dest_page])?;
+                            self.header.free_blocks = self.allocator.free_blocks() as u64;
+                        }
+                    }
+                    recovered += 1;
+                }
+                WalState::Committed => {
+                    // Already done. Just clear.
+                }
+            }
+        }
+
+        // Clear the WAL
+        let writes = wal.clear();
+        for w in &writes {
+            self.apply_wal_write(w)?;
+        }
+        self.sync_file()?;
+
+        if recovered > 0 {
+            tracing::info!("WAL recovery: cleaned up {} incomplete operations", recovered);
+        }
+
+        Ok(recovered)
+    }
+}
+
+/// Progress of an incremental vacuum operation.
+#[derive(Debug, Clone)]
+pub struct VacuumProgress {
+    /// Pages relocated in this step.
+    pub pages_relocated: usize,
+    /// Pages still needing relocation.
+    pub pages_remaining: usize,
+    /// Bytes that can be reclaimed once relocation is complete.
+    pub bytes_reclaimable: u64,
+    /// True when all relocation is done and `vacuum_finish()` can be called.
+    pub done: bool,
 }
 
 impl Drop for Cartridge {
@@ -1383,6 +1916,10 @@ pub struct CartridgeStats {
     pub free_blocks: u64,
     pub used_blocks: u64,
     pub fragmentation: f64,
+    /// Disk path of the backing file, or `None` for in-memory cartridges.
+    pub path: Option<std::path::PathBuf>,
+    /// Size of the backing file in bytes, or 0 for in-memory cartridges.
+    pub file_size_bytes: u64,
 }
 
 #[cfg(test)]
@@ -2106,6 +2643,210 @@ mod tests {
         }
         assert!(missing.is_empty(), "Missing {} files: {:?}",
             missing.len(), &missing[..missing.len().min(20)]);
+    }
+
+    // ===================================================================
+    // Vacuum tests
+    // ===================================================================
+
+    #[test]
+    fn test_needs_vacuum_empty_cart() {
+        let cart = Cartridge::new(1000);
+        // 1000 blocks, 997 free (3 reserved). That's 99.7% waste.
+        assert!(cart.needs_vacuum());
+    }
+
+    #[test]
+    fn test_needs_vacuum_full_cart() {
+        let mut cart = Cartridge::new(100);
+        // Fill it up with files to reduce free space
+        for i in 0..90 {
+            let name = format!("f{}.dat", i);
+            let data = vec![0xABu8; 2048]; // half a page each
+            cart.create_file(&name, &data).unwrap();
+        }
+        // With 90 files consuming ~90 pages out of 100 (after auto-grow),
+        // waste should be low
+        let stats = cart.stats();
+        let waste_ratio = stats.free_blocks as f64 / stats.total_blocks as f64;
+        if waste_ratio < 0.5 {
+            assert!(!cart.needs_vacuum());
+        }
+    }
+
+    #[test]
+    fn test_vacuum_step_in_memory() {
+        // In-memory carts return done immediately (no file to truncate)
+        let mut cart = Cartridge::new(100);
+        let progress = cart.vacuum_step(4).unwrap();
+        assert!(progress.done);
+    }
+
+    #[test]
+    fn test_vacuum_incremental_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vacuum-test.cart");
+
+        // Create cart and fill with 50 files (~50 pages of content)
+        {
+            let mut cart = Cartridge::create_at(&path, "vacuum-test", "Vacuum Test").unwrap();
+            for i in 0..50 {
+                let name = format!("file-{:03}.dat", i);
+                let data = vec![(i as u8); PAGE_SIZE]; // exactly 1 page each
+                cart.create_file(&name, &data).unwrap();
+            }
+            cart.flush().unwrap();
+        }
+
+        let size_before_delete = std::fs::metadata(&path).unwrap().len();
+
+        // Reopen and delete 40 of the 50 files, leaving 10
+        {
+            let mut cart = Cartridge::open(&path).unwrap();
+            for i in 0..40 {
+                let name = format!("file-{:03}.dat", i);
+                cart.delete_file(&name).unwrap();
+            }
+            cart.flush().unwrap();
+
+            assert!(cart.needs_vacuum(), "Should need vacuum after deleting 80% of files");
+
+            // Run vacuum incrementally
+            let mut total_relocated = 0;
+            for _ in 0..100 {
+                let progress = cart.vacuum_step(4).unwrap();
+                total_relocated += progress.pages_relocated;
+                if progress.done {
+                    break;
+                }
+            }
+
+            // Finish vacuum — truncate
+            let bytes_freed = cart.vacuum_finish().unwrap();
+            assert!(bytes_freed > 0, "Should have freed some bytes");
+        }
+
+        let size_after_vacuum = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            size_after_vacuum < size_before_delete,
+            "File should be smaller after vacuum: {} vs {}",
+            size_after_vacuum,
+            size_before_delete
+        );
+
+        // Verify surviving files are intact
+        {
+            let cart = Cartridge::open(&path).unwrap();
+            for i in 40..50 {
+                let name = format!("file-{:03}.dat", i);
+                let data = cart.read_file(&name).unwrap();
+                assert_eq!(data.len(), PAGE_SIZE);
+                assert!(data.iter().all(|&b| b == i as u8),
+                    "File {} content corrupted after vacuum", name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_vacuum_crash_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crash-test.cart");
+
+        // Create cart with files
+        {
+            let mut cart = Cartridge::create_at(&path, "crash-test", "Crash Test").unwrap();
+            for i in 0..20 {
+                let name = format!("data-{:03}.dat", i);
+                let data = vec![(i as u8); PAGE_SIZE];
+                cart.create_file(&name, &data).unwrap();
+            }
+            cart.flush().unwrap();
+        }
+
+        // Delete files and create WAL but DON'T finish vacuum
+        {
+            let mut cart = Cartridge::open(&path).unwrap();
+            for i in 0..15 {
+                let name = format!("data-{:03}.dat", i);
+                cart.delete_file(&name).unwrap();
+            }
+            cart.flush().unwrap();
+
+            // Start vacuum — do one step to create WAL entries
+            let progress = cart.vacuum_step(2).unwrap();
+            assert!(progress.pages_relocated > 0 || progress.done);
+
+            // Flush to persist WAL and catalog changes, but don't finish
+            cart.flush().unwrap();
+            // Drop without vacuum_finish — simulates crash
+        }
+
+        // Reopen — recovery should handle the dirty WAL
+        {
+            let cart = Cartridge::open(&path).unwrap();
+
+            // Verify surviving files are intact
+            for i in 15..20 {
+                let name = format!("data-{:03}.dat", i);
+                let data = cart.read_file(&name).unwrap();
+                assert_eq!(data.len(), PAGE_SIZE);
+                assert!(data.iter().all(|&b| b == i as u8),
+                    "File {} corrupted after crash recovery", name);
+            }
+        }
+    }
+
+    #[test]
+    fn test_vacuum_no_work_needed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-work.cart");
+
+        // Create a small cart — pages are packed at front
+        {
+            let mut cart = Cartridge::create_at(&path, "no-work", "No Work").unwrap();
+            cart.create_file("keep.txt", b"hello").unwrap();
+            cart.flush().unwrap();
+        }
+
+        {
+            let mut cart = Cartridge::open(&path).unwrap();
+            let progress = cart.vacuum_step(10).unwrap();
+            // Should be done immediately — nothing to relocate
+            assert!(progress.done);
+            assert_eq!(progress.pages_relocated, 0);
+        }
+    }
+
+    #[test]
+    fn test_shrink_capacity_allocators() {
+        use crate::allocator::BlockAllocator;
+
+        // Bitmap
+        let mut bitmap = crate::allocator::bitmap::BitmapAllocator::new(1000);
+        bitmap.allocate_blocks(10).unwrap(); // blocks 0-9
+        bitmap.shrink_capacity(100).unwrap();
+        assert_eq!(bitmap.total_blocks(), 100);
+        assert_eq!(bitmap.free_blocks(), 90);
+
+        // Cannot shrink below allocated blocks
+        let mut bitmap2 = crate::allocator::bitmap::BitmapAllocator::new(100);
+        bitmap2.allocate_blocks(100).unwrap();
+        bitmap2.free_allocated_blocks(&[0, 1, 2, 3, 4]).unwrap();
+        // Blocks 5-99 are allocated — can't shrink to 50
+        assert!(bitmap2.shrink_capacity(50).is_err());
+
+        // Extent
+        let mut extent = crate::allocator::extent::ExtentAllocator::new(1000);
+        extent.allocate_contiguous(10).unwrap(); // blocks 0-9
+        extent.shrink_capacity(100).unwrap();
+        assert_eq!(extent.total_blocks(), 100);
+        assert_eq!(extent.free_blocks(), 90);
+
+        // Hybrid
+        let mut hybrid = crate::allocator::hybrid::HybridAllocator::new(1000);
+        hybrid.allocate(10 * PAGE_SIZE as u64).unwrap();
+        hybrid.shrink_capacity(100).unwrap();
+        assert_eq!(hybrid.total_blocks(), 100);
     }
 }
 

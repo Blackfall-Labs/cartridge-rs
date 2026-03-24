@@ -57,11 +57,12 @@ pub mod core;
 #[allow(unused_imports)]
 pub(crate) use core::{
     allocator, audit, buffer_pool, catalog, compression, encryption, engram_integration, error,
-    header, iam, io, manifest, page, snapshot, validation, vfs,
+    header, iam, io, manifest, page, snapshot, validation, vfs, wal,
 };
 
 // Re-export core types that users need
 pub use crate::core::{
+    cartridge::CartridgeStats,
     catalog::{FileMetadata, FileType},
     encryption::EncryptionConfig,
     error::{CartridgeError, Result},
