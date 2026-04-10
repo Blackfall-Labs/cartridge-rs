@@ -29,3 +29,6 @@ test_output/
 
 # AI
 .claude
+
+.fslckout
+.ignore
